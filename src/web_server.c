@@ -175,6 +175,33 @@ static void get_field(const char *body, const char *key, char *out, size_t n)
     url_decode(out);
 }
 
+// Escapes &, <, >, ", ' for safe embedding into HTML attribute/text context.
+// Truncates at `outsz` without splitting an entity if it wouldn't fit whole.
+static void html_escape(const char *in, char *out, size_t outsz)
+{
+    size_t o = 0;
+    for (size_t i = 0; in[i] != '\0' && o < outsz - 1; i++) {
+        const char *rep = NULL;
+        switch (in[i]) {
+            case '&':  rep = "&amp;";  break;
+            case '<':  rep = "&lt;";   break;
+            case '>':  rep = "&gt;";   break;
+            case '"':  rep = "&quot;"; break;
+            case '\'': rep = "&#39;";  break;
+            default: break;
+        }
+        if (rep) {
+            size_t rl = strlen(rep);
+            if (o + rl >= outsz) break;
+            memcpy(out + o, rep, rl);
+            o += rl;
+        } else {
+            out[o++] = in[i];
+        }
+    }
+    out[o] = '\0';
+}
+
 // ---------------------------------------------------------------------------
 // GET / — serve config page
 // ---------------------------------------------------------------------------
@@ -195,14 +222,23 @@ static esp_err_t root_get_handler(httpd_req_t *req)
             "<p class=\"sub\">Stream: <span class=\"url\">rtsp://%s/audio</span></p>", ip);
     }
 
+    // Escape before reflecting into the page — SSID/password can contain
+    // almost any printable character (unlike device_name, which is already
+    // restricted to alnum+hyphen at save time), so this is output encoding,
+    // not input filtering.
+    char name_esc[200], ssid_esc[400], pass_esc[400];
+    html_escape(g_config.device_name,   name_esc, sizeof(name_esc));
+    html_escape(g_config.wifi_ssid,     ssid_esc, sizeof(ssid_esc));
+    html_escape(g_config.wifi_password, pass_esc, sizeof(pass_esc));
+
     char *buf = malloc(8192);
     if (!buf) return ESP_ERR_NO_MEM;
 
     int len = snprintf(buf, 8192, s_html,
         status_line,
-        g_config.device_name,
-        g_config.wifi_ssid,
-        g_config.wifi_password,
+        name_esc,
+        ssid_esc,
+        pass_esc,
         g_config.audio_source == AUDIO_SOURCE_I2S ? " selected" : "",
         g_config.audio_source == AUDIO_SOURCE_USB ? " selected" : "",
         g_config.sample_rate ==  8000 ? " selected" : "",
