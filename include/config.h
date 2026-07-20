@@ -16,6 +16,11 @@
 #define WIFI_AP_SSID      "BirdListener-Setup"
 #define WIFI_AP_PASSWORD  "birdlistener"
 
+// mDNS hostname once connected to a real network — reachable at
+// http://<name>.local/. User-configurable via the web UI; this is just the
+// fallback for a fresh device or an emptied-out name field.
+#define DEVICE_NAME_DEFAULT  "birdlistener"
+
 // =============================================================================
 // BOOT button (GPIO0) gestures — checked only while the app is already
 // running, never at power-on: GPIO0's bootloader-strapping role would

@@ -51,6 +51,10 @@ static const char *s_html =
     "<h1>BirdListener</h1>"
     "%s"
     "<form method=\"POST\" action=\"/save\">"
+    "<div class=\"card\"><h2>Device</h2>"
+    "<label class=\"tip\" data-tip=\"Name for this device on your network. Becomes the mDNS address, e.g. 'birdlistener32' -> http://birdlistener32.local/. Letters, numbers, and hyphens only.\">Name</label>"
+    "<input name=\"device_name\" value=\"%s\" autocomplete=\"off\" spellcheck=\"false\" maxlength=\"31\">"
+    "</div>"
     "<div class=\"card\"><h2>WiFi</h2>"
     "<label class=\"tip\" data-tip=\"Your WiFi network name. Change this to move the device to a different network. Takes effect after reboot.\">SSID</label>"
     "<input name=\"ssid\" value=\"%s\" autocomplete=\"off\" spellcheck=\"false\">"
@@ -196,6 +200,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     int len = snprintf(buf, 8192, s_html,
         status_line,
+        g_config.device_name,
         g_config.wifi_ssid,
         g_config.wifi_password,
         g_config.audio_source == AUDIO_SOURCE_I2S ? " selected" : "",
@@ -240,6 +245,18 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     body[received] = '\0';
 
     char val[128];
+
+    get_field(body, "device_name", val, sizeof(val));
+    if (val[0]) {
+        char clean[sizeof(g_config.device_name)];
+        size_t n = 0;
+        for (size_t i = 0; val[i] != '\0' && n < sizeof(clean) - 1; i++) {
+            char c = val[i];
+            if (isalnum((unsigned char)c) || c == '-') clean[n++] = c;
+        }
+        clean[n] = '\0';
+        strlcpy(g_config.device_name, n ? clean : DEVICE_NAME_DEFAULT, sizeof(g_config.device_name));
+    }
 
     get_field(body, "ssid", val, sizeof(val));
     if (val[0]) strlcpy(g_config.wifi_ssid, val, sizeof(g_config.wifi_ssid));

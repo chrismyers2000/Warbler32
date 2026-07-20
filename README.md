@@ -58,10 +58,12 @@ confirm. Only does anything while the device is broadcasting the setup AP.
 
 ## Using it
 
-Once connected to your WiFi, the device is reachable at:
+The config page has a **Device Name** field (default `birdlistener`) — set it
+to whatever you like (letters, numbers, hyphens), useful for telling multiple
+devices apart. Once connected to your WiFi, the device is reachable at:
 
-- **Config page**: `http://birdlistener.local/`
-- **Stream**: `rtsp://birdlistener.local/audio`
+- **Config page**: `http://<name>.local/` (e.g. `http://birdlistener.local/`)
+- **Stream**: `rtsp://<name>.local/audio`
 
 (If your network doesn't support mDNS/`.local` names, check your router's
 client list for the device's IP instead.)

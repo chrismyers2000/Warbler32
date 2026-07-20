@@ -8,6 +8,7 @@ extern "C" {
 #endif
 
 typedef struct {
+    char     device_name[32];
     char     wifi_ssid[64];
     char     wifi_password[64];
     uint32_t sample_rate;

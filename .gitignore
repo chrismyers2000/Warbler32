@@ -2,3 +2,4 @@
 sdkconfig.esp32s3
 managed_components/
 .claude/
+CLAUDE.md

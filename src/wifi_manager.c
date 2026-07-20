@@ -171,11 +171,11 @@ static void event_handler(void *arg, esp_event_base_t base,
         status_led_set(LED_CONNECTED);
 
         mdns_init();
-        mdns_hostname_set("birdlistener");
-        mdns_instance_name_set("BirdListener");
+        mdns_hostname_set(g_config.device_name);
+        mdns_instance_name_set(g_config.device_name);
         mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
         mdns_service_add(NULL, "_rtsp", "_tcp", 554, NULL, 0);
-        ESP_LOGI(TAG, "reachable at http://birdlistener.local/");
+        ESP_LOGI(TAG, "reachable at http://%s.local/", g_config.device_name);
 
         xEventGroupSetBits(s_wifi_event_group, WIFI_READY_BIT);
     }

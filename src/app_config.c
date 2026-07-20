@@ -13,6 +13,7 @@ app_config_t g_config;
 esp_err_t app_config_load(void)
 {
     // Apply compile-time defaults first
+    strlcpy(g_config.device_name,    DEVICE_NAME_DEFAULT, sizeof(g_config.device_name));
     strlcpy(g_config.wifi_ssid,      WIFI_SSID,           sizeof(g_config.wifi_ssid));
     strlcpy(g_config.wifi_password,  WIFI_PASSWORD,       sizeof(g_config.wifi_password));
     g_config.sample_rate    = AUDIO_SAMPLE_RATE;
@@ -33,6 +34,8 @@ esp_err_t app_config_load(void)
 
     size_t len;
 
+    len = sizeof(g_config.device_name);
+    nvs_get_str(h, "devname",     g_config.device_name,   &len);
     len = sizeof(g_config.wifi_ssid);
     nvs_get_str(h, "ssid",        g_config.wifi_ssid,     &len);
     len = sizeof(g_config.wifi_password);
@@ -47,8 +50,8 @@ esp_err_t app_config_load(void)
 
     nvs_close(h);
 
-    ESP_LOGI(TAG, "loaded: ssid=\"%s\" rate=%lu shift=%d mult=%d bright=%d",
-             g_config.wifi_ssid, (unsigned long)g_config.sample_rate,
+    ESP_LOGI(TAG, "loaded: name=\"%s\" ssid=\"%s\" rate=%lu shift=%d mult=%d bright=%d",
+             g_config.device_name, g_config.wifi_ssid, (unsigned long)g_config.sample_rate,
              g_config.gain_shift, g_config.gain_mult, g_config.led_brightness);
     return ESP_OK;
 }
@@ -59,6 +62,7 @@ esp_err_t app_config_save(void)
     esp_err_t ret = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (ret != ESP_OK) return ret;
 
+    nvs_set_str(h, "devname",     g_config.device_name);
     nvs_set_str(h, "ssid",        g_config.wifi_ssid);
     nvs_set_str(h, "password",    g_config.wifi_password);
     nvs_set_u32(h, "sample_rate", g_config.sample_rate);
