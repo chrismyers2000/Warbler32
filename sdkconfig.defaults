@@ -1,14 +1,16 @@
-# sdkconfig.defaults — persisted Kconfig overrides for ESP32-S3-N8R2
+# sdkconfig.defaults — persisted Kconfig overrides shared by every supported
+# ESP32-S3-DevKitC-1 board variant. PSRAM bus mode (Quad/Octal) and flash
+# size are board-specific and NOT set here — scripts/detect_board.py detects
+# the connected board at build time and generates sdkconfig.defaults.detected
+# (picking sdkconfig.defaults.quad or sdkconfig.defaults.oct) to cover those.
 
-# ---- PSRAM (2 MB QSPI) ----
+# ---- PSRAM (settings common to both Quad and Octal modes) ----
 CONFIG_ESP32S3_SPIRAM_SUPPORT=y
-CONFIG_SPIRAM_MODE_QUAD=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
 # ---- Flash ----
-CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=n
 CONFIG_PARTITION_TABLE_TWO_OTA=n
 CONFIG_PARTITION_TABLE_SINGLE_APP=n

@@ -1,0 +1,4 @@
+# PSRAM bus mode for Octal-SPI PSRAM ESP32-S3 modules (4/8/16MB PSRAM: N8R8,
+# N16R8, N16R8V, N32R8V, and other WROOM-2-family boards). Selected
+# automatically by scripts/detect_board.py based on the connected chip.
+CONFIG_SPIRAM_MODE_OCT=y

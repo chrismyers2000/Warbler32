@@ -1,0 +1,4 @@
+# PSRAM bus mode for Quad-SPI PSRAM ESP32-S3 modules (2MB PSRAM: N8R2, N16R2,
+# and other WROOM-1-family boards). Selected automatically by
+# scripts/detect_board.py — also the safe fallback when detection fails.
+CONFIG_SPIRAM_MODE_QUAD=y

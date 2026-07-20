@@ -1,20 +1,20 @@
 # Warbler32
 
-ESP32-S3 firmware that captures audio from a microphone and streams it live over
-RTSP, for listening to (or running [BirdNET-Go](https://github.com/tphakala/birdnet-go)
-against) birds outside your window. A "warbler" is a small bird — matching the
-small ESP32 chip and the project's goal of being a lightweight streamer.
+Warbler32 is a device for streaming RTSP audio to a bird identification server such as [BirdNET-Go](https://github.com/tphakala/birdnet-go). This is a low power device that can be solar and/or battery powered and placed further away (within WiFi range) from your house than you would if running the microphone on the BirdNET server itself (usually a raspberry pi). As an example, I'm running BirdNET-Go on a proxmox server and have 3 audio streams running to it at the same time. These 3 devices are located  about 600ft from each-other on my property so I can capture a wider range of birds.
 
 Supports two microphone options:
 - **INMP441** — a cheap I2S digital microphone breakout, wired directly to the board.
-- **USB microphone** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
+- **USB microphone (Cleaner Audio)** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
   into the board's native USB port.
 
 No programming experience is required to use this — just follow the steps below.
 
 ## What you'll need
 
-- An **ESP32-S3-DevKitC-1** board (N8R2: 8MB flash, 2MB PSRAM)
+- An **ESP32-S3-DevKitC-1** board with PSRAM — N8R2, N16R8, or similar
+  variants with two USB ports (native USB + UART) all work. The exact
+  flash/PSRAM configuration is auto-detected when you flash it, so you don't
+  need to figure out which one you have.
 - A USB cable to connect it to your computer
 - Either an **INMP441** microphone breakout, or a **UAC-class USB microphone**
 - A computer running Windows, macOS, or Linux
