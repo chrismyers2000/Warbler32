@@ -337,6 +337,12 @@ static void gh_install_task(void *arg)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms        = 30000,
         .user_agent        = "warbler32",
+        // The redirect to GitHub's CDN uses a signed URL (~1 KB) with
+        // S3-style headers — both the RX header buffer and the TX buffer
+        // (which must hold the redirected request line) far exceed the
+        // 512-byte defaults.
+        .buffer_size       = 4096,
+        .buffer_size_tx    = 4096,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     uint8_t *buf = malloc(4096);
