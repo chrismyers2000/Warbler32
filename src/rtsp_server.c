@@ -10,6 +10,7 @@
 #include "lwip/netdb.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -45,6 +46,10 @@ typedef struct {
 } rtp_session_t;
 
 static rtp_session_t s_rtp = { .udp_sock = -1 };
+
+// Given by rtp_sender_task right before it exits, so the session cleanup
+// path can wait for it before closing/reusing its socket fd.
+static SemaphoreHandle_t s_rtp_stopped;
 
 // Max interleaved packet: 4-byte RTSP framing + RTP header + one packet of PCM
 #define RTP_BUF_MAX (4 + sizeof(rtp_header_t) + RTP_SAMPLES_PER_PACKET * sizeof(int16_t))
@@ -143,6 +148,7 @@ static void rtp_sender_task(void *arg)
     }
 
     ESP_LOGI(TAG, "RTP sender stopped");
+    xSemaphoreGive(s_rtp_stopped);
     vTaskDelete(NULL);
 }
 
@@ -353,6 +359,13 @@ static void handle_rtsp_client(int client_fd, const char *server_ip)
     }
 
     s_rtp.playing = false;
+    if (rtp_task != NULL) {
+        // Wait for the sender task to actually exit before this fd can be
+        // reused by the next accept() — otherwise a still-running sender
+        // can write stray RTP bytes into the next client's control stream.
+        xSemaphoreTake(s_rtp_stopped, pdMS_TO_TICKS(500));
+        rtp_task = NULL;
+    }
     status_led_set(LED_CONNECTED);
     close(client_fd);
     if (s_rtp.udp_sock >= 0) { close(s_rtp.udp_sock); s_rtp.udp_sock = -1; }
@@ -409,6 +422,8 @@ static void rtsp_listener_task(void *arg)
 
 esp_err_t rtsp_server_start(void)
 {
+    s_rtp_stopped = xSemaphoreCreateBinary();
+
     BaseType_t ok = xTaskCreatePinnedToCore(
         rtsp_listener_task, "rtsp_ctrl",
         TASK_RTSP_STACK, NULL,
