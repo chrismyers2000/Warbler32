@@ -1,0 +1,40 @@
+# sdkconfig.defaults — persisted Kconfig overrides for ESP32-S3-N8R2
+
+# ---- PSRAM (2 MB QSPI) ----
+CONFIG_ESP32S3_SPIRAM_SUPPORT=y
+CONFIG_SPIRAM_MODE_QUAD=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# ---- Flash ----
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=n
+CONFIG_PARTITION_TABLE_TWO_OTA=n
+CONFIG_PARTITION_TABLE_SINGLE_APP=n
+
+# ---- FreeRTOS ----
+# Larger default stack so we don't have to tune every task
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_FREERTOS_HZ=1000
+
+# ---- WiFi ----
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_TX_BUFFER=DYNAMIC
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+
+# ---- Compiler ----
+# Disable -Werror so C++ flags passed to C files don't break the build
+CONFIG_COMPILER_WARNINGS_EXTRA=n
+
+# ---- Logging ----
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# ---- USB Host (UAC microphone) ----
+# Default (256B) is too small for UAC mics whose configuration descriptor
+# covers multiple interfaces/alt settings; enumeration fails with
+# "Configuration descriptor larger than control transfer max length".
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024
