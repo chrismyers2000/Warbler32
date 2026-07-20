@@ -1,8 +1,13 @@
 #include "web_server.h"
 #include "app_config.h"
 #include "audio_pipeline.h"
+#include "rtsp_server.h"
 #include "wifi_manager.h"
 #include "config.h"
+
+#include "esp_wifi.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
 
 #include "esp_http_server.h"
 #include "esp_netif.h"
@@ -53,6 +58,15 @@ static const char *s_html =
     "</style></head><body>"
     "<h1>Warbler32</h1>"
     "%s"
+    "<div class=\"card\"><h2>Status</h2>"
+    "<div class=\"row\" style=\"grid-template-columns:1fr 1fr 1fr;row-gap:10px\">"
+    "<div><label>Uptime</label><span class=\"val\" id=\"stUp\">&ndash;</span></div>"
+    "<div><label>WiFi Signal</label><span class=\"val\" id=\"stWifi\">&ndash;</span></div>"
+    "<div><label>Free Memory</label><span class=\"val\" id=\"stHeap\">&ndash;</span></div>"
+    "<div><label>RTSP Clients</label><span class=\"val\" id=\"stCli\">&ndash;</span></div>"
+    "<div><label>Streaming</label><span class=\"val\" id=\"stStr\">&ndash;</span></div>"
+    "<div><label>Audio Drops</label><span class=\"val\" id=\"stOvr\">&ndash;</span></div>"
+    "</div></div>"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Device</h2>"
     "<label class=\"tip\" data-tip=\"Name for this device on your network. Becomes the mDNS address, e.g. 'warbler32' -> http://warbler32.local/. Letters, numbers, and hyphens only.\">Name</label>"
@@ -99,7 +113,10 @@ static const char *s_html =
     "<input type=\"range\" name=\"led_brightness\" min=\"0\" max=\"255\" value=\"%d\""
     " oninput=\"bv.textContent=this.value\">"
     "</div>"
-    "<button type=\"submit\">Save &amp; Reboot</button>"
+    "<button type=\"submit\">Save</button>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
+    "Audio &amp; LED changes apply instantly; name, WiFi, input source, and "
+    "sample rate changes reboot the device.</p>"
     "</form>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
     "<canvas id=\"lv\" width=\"600\" height=\"72\""
@@ -144,6 +161,21 @@ static const char *s_html =
     ".then(function(j){h.push(j.p);if(h.length>50)h.shift();draw();});"
     "},150);b.textContent='Stop Monitor';}"
     "};"
+    "function stFmt(s){"
+    "var d=Math.floor(s/86400),h=Math.floor(s%%86400/3600),m=Math.floor(s%%3600/60);"
+    "return d>0?d+'d '+h+'h':h>0?h+'h '+m+'m':m+'m '+s%%60+'s';"
+    "}"
+    "function stPoll(){"
+    "fetch('/status').then(function(r){return r.json();}).then(function(j){"
+    "document.getElementById('stUp').textContent=stFmt(j.uptime);"
+    "document.getElementById('stWifi').textContent=j.rssi?j.rssi+' dBm':'\\u2013';"
+    "document.getElementById('stHeap').textContent=Math.round(j.heap/1024)+' KB';"
+    "document.getElementById('stCli').textContent=j.clients+' / '+j.max_clients;"
+    "document.getElementById('stStr').textContent=j.streaming?j.streaming+' active':'no';"
+    "document.getElementById('stOvr').textContent=j.overruns;"
+    "}).catch(function(){});"
+    "}"
+    "setInterval(stPoll,2000);stPoll();"
     "window.doOta=function(){"
     "var f=document.getElementById('fw').files[0];"
     "if(!f){alert('Choose a firmware .bin file first.');return;}"
@@ -250,7 +282,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     if (wifi_manager_is_ap_mode()) {
         snprintf(status_line, sizeof(status_line),
             "<p class=\"sub\" style=\"color:#f59e0b\">Setup Mode &mdash; enter your WiFi "
-            "network below, then Save &amp; Reboot.</p>");
+            "network below, then Save.</p>");
     } else {
         char ip[16] = "0.0.0.0";
         esp_netif_ip_info_t ip_info;
@@ -330,6 +362,19 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     if (received <= 0) { free(body); return ESP_FAIL; }
     body[received] = '\0';
 
+    // Snapshot the fields that require a reboot to take effect (mDNS/WiFi
+    // re-init, mic driver + I2S clock re-init). Everything else — gains,
+    // HPF, noise gate, LED brightness — is read from g_config live by the
+    // audio/LED code and applies the moment the struct is updated.
+    char     old_name[sizeof(g_config.device_name)];
+    char     old_ssid[sizeof(g_config.wifi_ssid)];
+    char     old_pass[sizeof(g_config.wifi_password)];
+    uint8_t  old_source = g_config.audio_source;
+    uint32_t old_rate   = g_config.sample_rate;
+    strlcpy(old_name, g_config.device_name,   sizeof(old_name));
+    strlcpy(old_ssid, g_config.wifi_ssid,     sizeof(old_ssid));
+    strlcpy(old_pass, g_config.wifi_password, sizeof(old_pass));
+
     char val[128];
 
     get_field(body, "device_name", val, sizeof(val));
@@ -398,22 +443,43 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     free(body);
     app_config_save();
 
-    static const char resp[] =
-        "<!DOCTYPE html><html><head>"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        "<title>Warbler32</title></head>"
-        "<body style=\"font-family:system-ui;background:#111827;color:#e5e7eb;"
-        "text-align:center;padding:60px 16px\">"
-        "<h2 style=\"color:#34d399\">Saved!</h2>"
-        "<p>Device is rebooting&hellip;</p>"
-        "<p style=\"color:#6b7280;font-size:13px\">Page will reload in 8 seconds.</p>"
-        "<script>setTimeout(()=>{location.href='/'},8000)</script>"
-        "</body></html>";
+    bool reboot_needed =
+        strcmp(old_name, g_config.device_name)   != 0 ||
+        strcmp(old_ssid, g_config.wifi_ssid)     != 0 ||
+        strcmp(old_pass, g_config.wifi_password) != 0 ||
+        old_source != g_config.audio_source ||
+        old_rate   != g_config.sample_rate;
 
     httpd_resp_set_type(req, "text/html");
-    httpd_resp_send(req, resp, strlen(resp));
 
-    xTaskCreate(reboot_task, "reboot", 1024, NULL, 5, NULL);
+    if (reboot_needed) {
+        static const char resp[] =
+            "<!DOCTYPE html><html><head>"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>Warbler32</title></head>"
+            "<body style=\"font-family:system-ui;background:#111827;color:#e5e7eb;"
+            "text-align:center;padding:60px 16px\">"
+            "<h2 style=\"color:#34d399\">Saved!</h2>"
+            "<p>Device is rebooting&hellip;</p>"
+            "<p style=\"color:#6b7280;font-size:13px\">Page will reload in 8 seconds.</p>"
+            "<script>setTimeout(()=>{location.href='/'},8000)</script>"
+            "</body></html>";
+        httpd_resp_send(req, resp, strlen(resp));
+        xTaskCreate(reboot_task, "reboot", 1024, NULL, 5, NULL);
+    } else {
+        ESP_LOGI(TAG, "config saved, applied live (no reboot)");
+        static const char resp[] =
+            "<!DOCTYPE html><html><head>"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>Warbler32</title></head>"
+            "<body style=\"font-family:system-ui;background:#111827;color:#e5e7eb;"
+            "text-align:center;padding:60px 16px\">"
+            "<h2 style=\"color:#34d399\">Saved!</h2>"
+            "<p>Settings applied &mdash; no reboot needed.</p>"
+            "<script>setTimeout(()=>{location.href='/'},1200)</script>"
+            "</body></html>";
+        httpd_resp_send(req, resp, strlen(resp));
+    }
     return ESP_OK;
 }
 
@@ -576,6 +642,39 @@ static esp_err_t level_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /status — device diagnostics for the web UI (and anything else)
+// ---------------------------------------------------------------------------
+static esp_err_t status_get_handler(httpd_req_t *req)
+{
+    int rssi = 0;
+    if (!wifi_manager_is_ap_mode()) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
+    }
+
+    char json[320];
+    int len = snprintf(json, sizeof(json),
+        "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
+        "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
+        "\"overruns\":%u,\"peak\":%d,\"version\":\"%s\"}",
+        esp_timer_get_time() / 1000000,
+        (unsigned)esp_get_free_heap_size(),
+        (unsigned)esp_get_minimum_free_heap_size(),
+        (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+        rssi,
+        rtsp_server_client_count(), PIPELINE_MAX_READERS,
+        rtsp_server_streaming_count(),
+        (unsigned)audio_pipeline_get_overruns(),
+        audio_pipeline_get_peak_pct(),
+        esp_app_get_description()->version);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 esp_err_t web_server_start(void)
@@ -607,11 +706,15 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t post_ota = {
         .uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler,
     };
+    static const httpd_uri_t get_status = {
+        .uri = "/status", .method = HTTP_GET, .handler = status_get_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
     httpd_register_uri_handler(server, &post_reset);
     httpd_register_uri_handler(server, &post_ota);
+    httpd_register_uri_handler(server, &get_status);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);

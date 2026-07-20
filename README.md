@@ -141,10 +141,20 @@ devices apart. Once connected to your WiFi, the device is reachable at:
 client list for the device's IP instead.)
 
 Open the stream in VLC, or point [BirdNET-Go](https://github.com/tphakala/birdnet-go)
-at the RTSP URL for live bird ID.
+at the RTSP URL for live bird ID. Up to **two clients** can stream at once —
+handy for spot-checking in VLC while BirdNET-Go stays connected; a third
+connection is politely refused.
 
 The config page also lets you switch between the INMP441 and USB microphone,
-adjust sample rate/gain/filtering, and watch a live audio level meter.
+adjust sample rate/gain/filtering, and watch a live audio level meter. Audio
+and LED tweaks (gain, high-pass filter, noise gate, brightness) apply the
+moment you hit Save — no reboot, no stream interruption. Changing the name,
+WiFi, input source, or sample rate still reboots the device.
+
+A **Status** card at the top shows live diagnostics — uptime, WiFi signal,
+free memory, connected RTSP clients, and dropped-audio count. The same data
+is available as JSON at `http://<name>.local/status` if you want to script
+your own monitoring.
 
 ## Updating the firmware over WiFi
 

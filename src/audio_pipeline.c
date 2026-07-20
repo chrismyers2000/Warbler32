@@ -9,13 +9,39 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
+#include "freertos/semphr.h"
 #include <arpa/inet.h>
+#include <stdatomic.h>
 
 static const char *TAG = "pipeline";
 
-static RingbufHandle_t s_ringbuf  = NULL;
-static volatile int16_t s_peak   = 0;
+// One ring buffer per subscribed reader (i.e. per streaming RTSP client).
+// The reader task fans captured audio out to every active buffer, so each
+// client gets the full stream instead of stealing samples from the other.
+typedef struct {
+    RingbufHandle_t rb;
+    bool            active;
+} pipeline_reader_t;
+
+static pipeline_reader_t s_readers[PIPELINE_MAX_READERS];
+static SemaphoreHandle_t s_readers_mtx = NULL;
+
+static volatile int16_t s_peak = 0;
+static atomic_uint      s_overruns = 0;
 static size_t (*s_mic_read)(int16_t *buf, size_t count) = i2s_mic_read;
+
+static RingbufHandle_t create_ringbuf(void)
+{
+    RingbufHandle_t rb = xRingbufferCreateWithCaps(
+        PIPELINE_BUF_BYTES,
+        RINGBUF_TYPE_BYTEBUF,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (rb == NULL) {
+        ESP_LOGW(TAG, "PSRAM ring buffer failed, falling back to internal RAM");
+        rb = xRingbufferCreate(PIPELINE_BUF_BYTES, RINGBUF_TYPE_BYTEBUF);
+    }
+    return rb;
+}
 
 static void i2s_reader_task(void *arg)
 {
@@ -49,39 +75,32 @@ static void i2s_reader_task(void *arg)
         for (size_t i = 0; i < got; i++)
             pcm[i] = (int16_t)htons((uint16_t)pcm[i]);
 
-        // Send to ring buffer; drop oldest data if full (non-blocking send)
         size_t bytes = got * sizeof(int16_t);
-        BaseType_t ok = xRingbufferSend(s_ringbuf, pcm, bytes, 0);
-        if (ok != pdTRUE) {
-            // Ring buffer full — evict oldest item, then retry
-            size_t dummy_size;
-            void *dummy = xRingbufferReceive(s_ringbuf, &dummy_size, 0);
-            if (dummy) vRingbufferReturnItem(s_ringbuf, dummy);
-            ok = xRingbufferSend(s_ringbuf, pcm, bytes, 0);
-            if (ok != pdTRUE)
-                ESP_LOGW(TAG, "ring buffer full, audio dropped");
+
+        xSemaphoreTake(s_readers_mtx, portMAX_DELAY);
+        for (int r = 0; r < PIPELINE_MAX_READERS; r++) {
+            if (!s_readers[r].active) continue;
+
+            // Non-blocking send; a slow client only loses its own audio.
+            // On full, evict the oldest chunk and retry once.
+            if (xRingbufferSend(s_readers[r].rb, pcm, bytes, 0) != pdTRUE) {
+                size_t dummy_size;
+                void *dummy = xRingbufferReceiveUpTo(s_readers[r].rb, &dummy_size,
+                                                     0, bytes);
+                if (dummy) vRingbufferReturnItem(s_readers[r].rb, dummy);
+                if (xRingbufferSend(s_readers[r].rb, pcm, bytes, 0) != pdTRUE)
+                    ESP_LOGW(TAG, "reader %d buffer full, audio dropped", r);
+                atomic_fetch_add(&s_overruns, 1);
+            }
         }
+        xSemaphoreGive(s_readers_mtx);
     }
 }
 
 esp_err_t audio_pipeline_start(void)
 {
-    // Allocate ring buffer in PSRAM
-    s_ringbuf = xRingbufferCreateWithCaps(
-        PIPELINE_BUF_BYTES,
-        RINGBUF_TYPE_BYTEBUF,
-        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-
-    if (s_ringbuf == NULL) {
-        ESP_LOGW(TAG, "PSRAM ring buffer failed, falling back to internal RAM");
-        s_ringbuf = xRingbufferCreate(PIPELINE_BUF_BYTES, RINGBUF_TYPE_BYTEBUF);
-    }
-
-    if (s_ringbuf == NULL) {
-        ESP_LOGE(TAG, "failed to allocate ring buffer");
-        return ESP_ERR_NO_MEM;
-    }
-    ESP_LOGI(TAG, "ring buffer: %u bytes", (unsigned)PIPELINE_BUF_BYTES);
+    s_readers_mtx = xSemaphoreCreateMutex();
+    if (s_readers_mtx == NULL) return ESP_ERR_NO_MEM;
 
     esp_err_t ret;
     if (g_config.audio_source == AUDIO_SOURCE_USB) {
@@ -102,12 +121,44 @@ esp_err_t audio_pipeline_start(void)
     return (ok == pdPASS) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-void audio_pipeline_flush(void)
+int audio_pipeline_subscribe(void)
 {
+    int slot = -1;
+
+    xSemaphoreTake(s_readers_mtx, portMAX_DELAY);
+    for (int r = 0; r < PIPELINE_MAX_READERS; r++) {
+        if (s_readers[r].active) continue;
+        if (s_readers[r].rb == NULL)
+            s_readers[r].rb = create_ringbuf();
+        if (s_readers[r].rb != NULL) {
+            s_readers[r].active = true;
+            slot = r;
+        }
+        break;
+    }
+    xSemaphoreGive(s_readers_mtx);
+
+    if (slot < 0) ESP_LOGW(TAG, "no free reader slot");
+    else          ESP_LOGI(TAG, "reader %d subscribed", slot);
+    return slot;
+}
+
+void audio_pipeline_unsubscribe(int reader)
+{
+    if (reader < 0 || reader >= PIPELINE_MAX_READERS) return;
+
+    xSemaphoreTake(s_readers_mtx, portMAX_DELAY);
+    s_readers[reader].active = false;
+    // Keep the ring buffer allocated for reuse, but drain it so the next
+    // subscriber starts with fresh audio instead of stale samples.
     size_t size;
     void *item;
-    while ((item = xRingbufferReceiveUpTo(s_ringbuf, &size, 0, PIPELINE_BUF_BYTES)) != NULL)
-        vRingbufferReturnItem(s_ringbuf, item);
+    while ((item = xRingbufferReceiveUpTo(s_readers[reader].rb, &size, 0,
+                                          PIPELINE_BUF_BYTES)) != NULL)
+        vRingbufferReturnItem(s_readers[reader].rb, item);
+    xSemaphoreGive(s_readers_mtx);
+
+    ESP_LOGI(TAG, "reader %d unsubscribed", reader);
 }
 
 int audio_pipeline_get_peak_pct(void)
@@ -116,22 +167,29 @@ int audio_pipeline_get_peak_pct(void)
     return (pk * 100) / 32767;
 }
 
-size_t audio_pipeline_read(uint8_t *buf, size_t bytes, uint32_t timeout_ms)
+uint32_t audio_pipeline_get_overruns(void)
 {
+    return atomic_load(&s_overruns);
+}
+
+size_t audio_pipeline_read(int reader, uint8_t *buf, size_t bytes, uint32_t timeout_ms)
+{
+    if (reader < 0 || reader >= PIPELINE_MAX_READERS) return 0;
+    RingbufHandle_t rb = s_readers[reader].rb;
+    if (rb == NULL) return 0;
+
     size_t received = 0;
     uint8_t *dst = buf;
     TickType_t timeout = pdMS_TO_TICKS(timeout_ms);
 
     while (received < bytes) {
         size_t chunk_size;
-        void *chunk = xRingbufferReceiveUpTo(s_ringbuf,
-                                             &chunk_size,
-                                             timeout,
+        void *chunk = xRingbufferReceiveUpTo(rb, &chunk_size, timeout,
                                              bytes - received);
         if (chunk == NULL) break;
 
         memcpy(dst, chunk, chunk_size);
-        vRingbufferReturnItem(s_ringbuf, chunk);
+        vRingbufferReturnItem(rb, chunk);
         dst      += chunk_size;
         received += chunk_size;
         timeout   = 0;  // subsequent grabs are non-blocking

@@ -8,9 +8,10 @@ extern "C" {
 #endif
 
 typedef struct {
-    float hpf_alpha;
-    float hpf_in;
-    float hpf_out;
+    float    hpf_alpha;
+    float    hpf_in;
+    float    hpf_out;
+    uint16_t hpf_freq_applied;   // g_config.hpf_freq the alpha was computed for
 } audio_dsp_state_t;
 
 // Precompute HPF alpha from g_config.hpf_freq / g_config.sample_rate and reset filter state.

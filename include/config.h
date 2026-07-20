@@ -89,10 +89,12 @@
 #define RTP_SAMPLES_PER_PACKET  960
 
 // =============================================================================
-// Audio pipeline ring buffer (allocated in PSRAM)
-// Holds ~500 ms of audio to absorb network jitter
+// Audio pipeline ring buffers (allocated in PSRAM)
+// Each subscriber (one per streaming RTSP client) gets its own buffer
+// holding ~500 ms of audio to absorb network jitter
 // =============================================================================
-#define PIPELINE_BUF_BYTES  (AUDIO_SAMPLE_RATE * AUDIO_BITS_PER_SAMPLE / 8 / 2)
+#define PIPELINE_BUF_BYTES   (AUDIO_SAMPLE_RATE * AUDIO_BITS_PER_SAMPLE / 8 / 2)
+#define PIPELINE_MAX_READERS 2   // also the max simultaneous RTSP clients
 
 // =============================================================================
 // NeoPixel status LED (WS2812B on GPIO 48 = onboard RGB LED)

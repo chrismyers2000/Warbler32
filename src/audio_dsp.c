@@ -13,10 +13,17 @@ void audio_dsp_init(audio_dsp_state_t *st)
     }
     st->hpf_in  = 0.0f;
     st->hpf_out = 0.0f;
+    st->hpf_freq_applied = g_config.hpf_freq;
 }
 
 void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
 {
+    // hpf_freq is web-configurable without a reboot; re-derive alpha when it
+    // changes (gain_mult/noise_gate below read g_config directly, so they
+    // need no equivalent).
+    if (st->hpf_freq_applied != g_config.hpf_freq)
+        audio_dsp_init(st);
+
     for (size_t i = 0; i < count; i++) {
         int32_t s = (int32_t)buf[i] * g_config.gain_mult;
 

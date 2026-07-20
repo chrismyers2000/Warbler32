@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 
@@ -42,14 +43,38 @@ typedef struct {
     uint16_t seq;
     uint32_t timestamp;
     uint32_t ssrc;
-    bool     playing;
+    volatile bool playing;
 } rtp_session_t;
 
-static rtp_session_t s_rtp = { .udp_sock = -1 };
+// One slot per simultaneous client (e.g. BirdNET-Go + a VLC spot-check).
+// `in_use` is claimed by the listener task and released by the client task,
+// both under s_slots_mtx; everything else in the slot is owned by the client
+// task while in_use is set.
+typedef struct {
+    bool          in_use;
+    int           id;          // 1-based, used as the RTSP Session id
+    int           client_fd;
+    int           reader;      // audio_pipeline subscription, -1 when none
+    rtp_session_t rtp;
+    TaskHandle_t  rtp_task;
+    // Given by rtp_sender_task right before it exits, so cleanup can wait
+    // for it before closing/reusing the socket fd.
+    SemaphoreHandle_t rtp_stopped;
+} rtsp_client_slot_t;
 
-// Given by rtp_sender_task right before it exits, so the session cleanup
-// path can wait for it before closing/reusing its socket fd.
-static SemaphoreHandle_t s_rtp_stopped;
+static rtsp_client_slot_t s_slots[PIPELINE_MAX_READERS];
+static SemaphoreHandle_t  s_slots_mtx;
+static atomic_int s_connected = 0;
+static atomic_int s_streaming = 0;
+static char s_server_ip[16] = "0.0.0.0";
+
+int rtsp_server_client_count(void)    { return atomic_load(&s_connected); }
+int rtsp_server_streaming_count(void) { return atomic_load(&s_streaming); }
+
+static void led_refresh(void)
+{
+    status_led_set(atomic_load(&s_streaming) > 0 ? LED_STREAMING : LED_CONNECTED);
+}
 
 // Max interleaved packet: 4-byte RTSP framing + RTP header + one packet of PCM
 #define RTP_BUF_MAX (4 + sizeof(rtp_header_t) + RTP_SAMPLES_PER_PACKET * sizeof(int16_t))
@@ -129,27 +154,50 @@ static bool rtp_send_packet(rtp_session_t *s, const uint8_t *payload, size_t len
 }
 
 // ---------------------------------------------------------------------------
-// RTP sender task (runs while a client is playing)
+// RTP sender task (one per playing client)
 // ---------------------------------------------------------------------------
 
 static void rtp_sender_task(void *arg)
 {
-    static uint8_t pcm_buf[RTP_SAMPLES_PER_PACKET * sizeof(int16_t)];
+    rtsp_client_slot_t *c = (rtsp_client_slot_t *)arg;
+    uint8_t *pcm_buf = malloc(RTP_SAMPLES_PER_PACKET * sizeof(int16_t));
 
-    ESP_LOGI(TAG, "RTP sender started → %s:%d",
-             inet_ntoa(s_rtp.client_addr.sin_addr),
-             ntohs(s_rtp.client_addr.sin_port));
+    ESP_LOGI(TAG, "[%d] RTP sender started → %s:%d", c->id,
+             inet_ntoa(c->rtp.client_addr.sin_addr),
+             ntohs(c->rtp.client_addr.sin_port));
 
-    while (s_rtp.playing) {
-        size_t got = audio_pipeline_read(pcm_buf, sizeof(pcm_buf), 200);
+    while (c->rtp.playing && pcm_buf != NULL) {
+        size_t got = audio_pipeline_read(c->reader, pcm_buf,
+                                         RTP_SAMPLES_PER_PACKET * sizeof(int16_t), 200);
         if (got == 0) continue;
-        if (!rtp_send_packet(&s_rtp, pcm_buf, got))
-            s_rtp.playing = false;
+        if (!rtp_send_packet(&c->rtp, pcm_buf, got))
+            c->rtp.playing = false;
     }
 
-    ESP_LOGI(TAG, "RTP sender stopped");
-    xSemaphoreGive(s_rtp_stopped);
+    free(pcm_buf);
+    ESP_LOGI(TAG, "[%d] RTP sender stopped", c->id);
+    xSemaphoreGive(c->rtp_stopped);
     vTaskDelete(NULL);
+}
+
+// Stop this slot's sender task (waiting for it to actually exit) and drop
+// its pipeline subscription. Safe to call when nothing is playing.
+static void stop_streaming(rtsp_client_slot_t *c)
+{
+    if (c->rtp_task != NULL) {
+        c->rtp.playing = false;
+        // Wait for the sender to actually exit before the fd can be closed
+        // or reused — otherwise a still-running sender can write stray RTP
+        // bytes into the next client's control stream.
+        xSemaphoreTake(c->rtp_stopped, pdMS_TO_TICKS(500));
+        c->rtp_task = NULL;
+        atomic_fetch_sub(&s_streaming, 1);
+    }
+    if (c->reader >= 0) {
+        audio_pipeline_unsubscribe(c->reader);
+        c->reader = -1;
+    }
+    led_refresh();
 }
 
 // ---------------------------------------------------------------------------
@@ -202,19 +250,19 @@ static int build_sdp(char *buf, size_t size, const char *server_ip)
 }
 
 // ---------------------------------------------------------------------------
-// RTSP session handler (runs per accepted TCP connection)
+// RTSP session handler (runs in a per-connection task)
 // ---------------------------------------------------------------------------
 
-static void handle_rtsp_client(int client_fd, const char *server_ip)
+static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
 {
     char buf[2048];
     char resp[512];
     char sdp[256];
-    TaskHandle_t rtp_task = NULL;
+    int client_fd = c->client_fd;
     int buf_len = 0;
     bool done = false;
 
-    ESP_LOGI(TAG, "client connected");
+    ESP_LOGI(TAG, "[%d] client connected", c->id);
 
     while (!done) {
         int len = recv(client_fd, buf + buf_len, sizeof(buf) - 1 - buf_len, 0);
@@ -235,7 +283,7 @@ static void handle_rtsp_client(int client_fd, const char *server_ip)
             *req_end = '\0';
 
             int cseq = rtsp_get_cseq(pos);
-            ESP_LOGI(TAG, ">> %.60s", pos);
+            ESP_LOGI(TAG, "[%d] >> %.60s", c->id, pos);
 
             if (strncmp(pos, "OPTIONS", 7) == 0) {
                 snprintf(resp, sizeof(resp),
@@ -261,21 +309,21 @@ static void handle_rtsp_client(int client_fd, const char *server_ip)
                 const char *transport = rtsp_get_header(pos, "Transport");
                 bool tcp = transport && strstr(transport, "TCP") != NULL;
 
-                s_rtp.tcp_mode  = tcp;
-                s_rtp.tcp_fd    = tcp ? client_fd : -1;
-                s_rtp.ssrc      = (uint32_t)esp_random();
-                s_rtp.seq       = (uint16_t)esp_random();
-                s_rtp.timestamp = esp_random();
+                c->rtp.tcp_mode  = tcp;
+                c->rtp.tcp_fd    = tcp ? client_fd : -1;
+                c->rtp.ssrc      = (uint32_t)esp_random();
+                c->rtp.seq       = (uint16_t)esp_random();
+                c->rtp.timestamp = esp_random();
 
                 if (tcp) {
                     snprintf(resp, sizeof(resp),
                         "RTSP/1.0 200 OK\r\n"
                         "CSeq: %d\r\n"
                         "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
-                        "Session: 1\r\n\r\n",
-                        cseq);
+                        "Session: %d\r\n\r\n",
+                        cseq, c->id);
                     send(client_fd, resp, strlen(resp), 0);
-                    ESP_LOGI(TAG, "SETUP: RTP → TCP interleaved");
+                    ESP_LOGI(TAG, "[%d] SETUP: RTP → TCP interleaved", c->id);
                 } else {
                     uint16_t client_rtp_port = 5004;
                     if (transport) {
@@ -287,52 +335,67 @@ static void handle_rtsp_client(int client_fd, const char *server_ip)
                     socklen_t peer_len = sizeof(peer);
                     getpeername(client_fd, (struct sockaddr *)&peer, &peer_len);
 
-                    s_rtp.client_addr.sin_family = AF_INET;
-                    s_rtp.client_addr.sin_addr   = peer.sin_addr;
-                    s_rtp.client_addr.sin_port   = htons(client_rtp_port);
+                    c->rtp.client_addr.sin_family = AF_INET;
+                    c->rtp.client_addr.sin_addr   = peer.sin_addr;
+                    c->rtp.client_addr.sin_port   = htons(client_rtp_port);
 
-                    if (s_rtp.udp_sock >= 0) close(s_rtp.udp_sock);
-                    s_rtp.udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+                    if (c->rtp.udp_sock >= 0) close(c->rtp.udp_sock);
+                    c->rtp.udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
                     snprintf(resp, sizeof(resp),
                         "RTSP/1.0 200 OK\r\n"
                         "CSeq: %d\r\n"
                         "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=5004-5005\r\n"
-                        "Session: 1\r\n\r\n",
-                        cseq, client_rtp_port, client_rtp_port + 1);
+                        "Session: %d\r\n\r\n",
+                        cseq, client_rtp_port, client_rtp_port + 1, c->id);
                     send(client_fd, resp, strlen(resp), 0);
-                    ESP_LOGI(TAG, "SETUP: RTP → UDP %s:%d",
-                             inet_ntoa(s_rtp.client_addr.sin_addr), client_rtp_port);
+                    ESP_LOGI(TAG, "[%d] SETUP: RTP → UDP %s:%d", c->id,
+                             inet_ntoa(c->rtp.client_addr.sin_addr), client_rtp_port);
                 }
 
             } else if (strncmp(pos, "PLAY", 4) == 0) {
-                audio_pipeline_flush();
-                s_rtp.playing = true;
-                xTaskCreatePinnedToCore(rtp_sender_task, "rtp_sender",
-                                        TASK_RTP_STACK, NULL,
-                                        TASK_RTP_PRIORITY, &rtp_task,
-                                        TASK_RTP_CORE);
-                status_led_set(LED_STREAMING);
+                if (c->rtp_task == NULL) {
+                    c->reader = audio_pipeline_subscribe();
+                    if (c->reader < 0) {
+                        snprintf(resp, sizeof(resp),
+                            "RTSP/1.0 453 Not Enough Bandwidth\r\n"
+                            "CSeq: %d\r\n\r\n", cseq);
+                        send(client_fd, resp, strlen(resp), 0);
+                        *req_end = saved;
+                        pos = req_end;
+                        continue;
+                    }
+                    // Drain a possibly-stale give from a previous session
+                    // whose 500 ms stop-wait timed out.
+                    xSemaphoreTake(c->rtp_stopped, 0);
+                    c->rtp.playing = true;
+                    xTaskCreatePinnedToCore(rtp_sender_task, "rtp_sender",
+                                            TASK_RTP_STACK, c,
+                                            TASK_RTP_PRIORITY, &c->rtp_task,
+                                            TASK_RTP_CORE);
+                    atomic_fetch_add(&s_streaming, 1);
+                    led_refresh();
+                }
 
                 snprintf(resp, sizeof(resp),
                     "RTSP/1.0 200 OK\r\n"
                     "CSeq: %d\r\n"
-                    "Session: 1\r\n"
+                    "Session: %d\r\n"
                     "RTP-Info: url=rtsp://%s/audio/trackID=0;seq=%u;rtptime=%u\r\n\r\n",
-                    cseq, server_ip, (unsigned)s_rtp.seq, (unsigned)s_rtp.timestamp);
+                    cseq, c->id, server_ip,
+                    (unsigned)c->rtp.seq, (unsigned)c->rtp.timestamp);
                 send(client_fd, resp, strlen(resp), 0);
-                ESP_LOGI(TAG, "PLAY");
+                ESP_LOGI(TAG, "[%d] PLAY", c->id);
 
             } else if (strncmp(pos, "TEARDOWN", 8) == 0) {
-                s_rtp.playing = false;
-                status_led_set(LED_CONNECTED);
+                stop_streaming(c);
                 snprintf(resp, sizeof(resp),
                     "RTSP/1.0 200 OK\r\n"
                     "CSeq: %d\r\n"
-                    "Session: 1\r\n\r\n",
-                    cseq);
+                    "Session: %d\r\n\r\n",
+                    cseq, c->id);
                 send(client_fd, resp, strlen(resp), 0);
-                ESP_LOGI(TAG, "TEARDOWN");
+                ESP_LOGI(TAG, "[%d] TEARDOWN", c->id);
                 *req_end = saved;
                 pos = req_end;
                 done = true;
@@ -358,18 +421,27 @@ static void handle_rtsp_client(int client_fd, const char *server_ip)
             buf_len = 0;
     }
 
-    s_rtp.playing = false;
-    if (rtp_task != NULL) {
-        // Wait for the sender task to actually exit before this fd can be
-        // reused by the next accept() — otherwise a still-running sender
-        // can write stray RTP bytes into the next client's control stream.
-        xSemaphoreTake(s_rtp_stopped, pdMS_TO_TICKS(500));
-        rtp_task = NULL;
-    }
-    status_led_set(LED_CONNECTED);
-    close(client_fd);
-    if (s_rtp.udp_sock >= 0) { close(s_rtp.udp_sock); s_rtp.udp_sock = -1; }
-    ESP_LOGI(TAG, "client disconnected");
+    ESP_LOGI(TAG, "[%d] client disconnected", c->id);
+}
+
+// Per-connection task: run the session, then release the slot.
+static void rtsp_client_task(void *arg)
+{
+    rtsp_client_slot_t *c = (rtsp_client_slot_t *)arg;
+
+    handle_rtsp_client(c, s_server_ip);
+
+    stop_streaming(c);
+    close(c->client_fd);
+    c->client_fd = -1;
+    if (c->rtp.udp_sock >= 0) { close(c->rtp.udp_sock); c->rtp.udp_sock = -1; }
+
+    xSemaphoreTake(s_slots_mtx, portMAX_DELAY);
+    c->in_use = false;
+    xSemaphoreGive(s_slots_mtx);
+    atomic_fetch_sub(&s_connected, 1);
+
+    vTaskDelete(NULL);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,17 +460,17 @@ static void rtsp_listener_task(void *arg)
         .sin_port        = htons(RTSP_PORT),
     };
     bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
-    listen(server_fd, 1);
+    listen(server_fd, PIPELINE_MAX_READERS);
 
-    ESP_LOGI(TAG, "RTSP listening on port %d", RTSP_PORT);
+    ESP_LOGI(TAG, "RTSP listening on port %d (max %d clients)",
+             RTSP_PORT, PIPELINE_MAX_READERS);
 
-    char server_ip[16] = "0.0.0.0";
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
-        snprintf(server_ip, sizeof(server_ip), IPSTR, IP2STR(&ip_info.ip));
+        snprintf(s_server_ip, sizeof(s_server_ip), IPSTR, IP2STR(&ip_info.ip));
     }
-    ESP_LOGI(TAG, "stream URL → rtsp://%s/audio", server_ip);
+    ESP_LOGI(TAG, "stream URL → rtsp://%s/audio", s_server_ip);
 
     for (;;) {
         struct sockaddr_in client_addr;
@@ -414,7 +486,45 @@ static void rtsp_listener_task(void *arg)
         setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
         struct timeval sndtv = { .tv_sec = 0, .tv_usec = 20000 }; // 20 ms
         setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &sndtv, sizeof(sndtv));
-        handle_rtsp_client(client_fd, server_ip);
+
+        rtsp_client_slot_t *slot = NULL;
+        xSemaphoreTake(s_slots_mtx, portMAX_DELAY);
+        for (int i = 0; i < PIPELINE_MAX_READERS; i++) {
+            if (!s_slots[i].in_use) {
+                s_slots[i].in_use    = true;
+                s_slots[i].client_fd = client_fd;
+                s_slots[i].reader    = -1;
+                s_slots[i].rtp_task  = NULL;
+                slot = &s_slots[i];
+                break;
+            }
+        }
+        xSemaphoreGive(s_slots_mtx);
+
+        if (slot == NULL) {
+            ESP_LOGW(TAG, "rejecting client: %d sessions already active",
+                     PIPELINE_MAX_READERS);
+            static const char busy[] =
+                "RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: 0\r\n\r\n";
+            send(client_fd, busy, sizeof(busy) - 1, 0);
+            close(client_fd);
+            continue;
+        }
+
+        atomic_fetch_add(&s_connected, 1);
+        char task_name[16];
+        snprintf(task_name, sizeof(task_name), "rtsp_cli%d", slot->id);
+        if (xTaskCreatePinnedToCore(rtsp_client_task, task_name,
+                                    TASK_RTSP_STACK, slot,
+                                    TASK_RTSP_PRIORITY, NULL,
+                                    TASK_RTSP_CORE) != pdPASS) {
+            ESP_LOGE(TAG, "failed to start client task");
+            close(client_fd);
+            xSemaphoreTake(s_slots_mtx, portMAX_DELAY);
+            slot->in_use = false;
+            xSemaphoreGive(s_slots_mtx);
+            atomic_fetch_sub(&s_connected, 1);
+        }
     }
 
     vTaskDelete(NULL);
@@ -422,7 +532,17 @@ static void rtsp_listener_task(void *arg)
 
 esp_err_t rtsp_server_start(void)
 {
-    s_rtp_stopped = xSemaphoreCreateBinary();
+    s_slots_mtx = xSemaphoreCreateMutex();
+    if (s_slots_mtx == NULL) return ESP_ERR_NO_MEM;
+
+    for (int i = 0; i < PIPELINE_MAX_READERS; i++) {
+        s_slots[i].id           = i + 1;
+        s_slots[i].client_fd    = -1;
+        s_slots[i].reader       = -1;
+        s_slots[i].rtp.udp_sock = -1;
+        s_slots[i].rtp_stopped  = xSemaphoreCreateBinary();
+        if (s_slots[i].rtp_stopped == NULL) return ESP_ERR_NO_MEM;
+    }
 
     BaseType_t ok = xTaskCreatePinnedToCore(
         rtsp_listener_task, "rtsp_ctrl",
