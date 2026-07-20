@@ -145,6 +145,24 @@ def write_detected_config(mode, flash_mb):
 
 def main():
     mode, flash_mb = FALLBACK_MODE, FALLBACK_FLASH_MB
+
+    # Release builds (scripts/release.sh) force the variant regardless of
+    # what board happens to be plugged in, so both variants can be built
+    # deterministically on the same machine.
+    forced = os.environ.get("WARBLER32_BOARD", "").strip().lower()
+    if forced:
+        if forced not in ("quad", "oct"):
+            sys.exit(f"warbler32: invalid WARBLER32_BOARD={forced!r} (use quad or oct)")
+        print(f"warbler32: WARBLER32_BOARD={forced} — skipping board detection")
+        write_detected_config(forced, flash_mb)
+        board = env.BoardConfig()  # noqa: F821
+        board.update(
+            "build.cmake_extra_args",
+            "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.detected",
+        )
+        board.update("upload.flash_size", f"{flash_mb}MB")
+        return
+
     try:
         port = find_upload_port()
         if port:

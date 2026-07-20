@@ -89,6 +89,13 @@
 #define RTP_SAMPLES_PER_PACKET  960
 
 // =============================================================================
+// OTA updates from GitHub releases
+// Release assets must be named warbler32-quad.bin / warbler32-oct.bin
+// (published by scripts/release.sh)
+// =============================================================================
+#define OTA_GITHUB_REPO "chrismyers2000/Warbler32"
+
+// =============================================================================
 // Audio pipeline ring buffers (allocated in PSRAM)
 // Each subscriber (one per streaming RTSP client) gets its own buffer
 // holding ~500 ms of audio to absorb network jitter
