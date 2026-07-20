@@ -1,19 +1,100 @@
 # Warbler32
 
 ESP32-S3 firmware that captures audio from a microphone and streams it live over
-RTSP, for listening to (or running BirdNET-Go against) birds outside your window.
+RTSP, for listening to (or running [BirdNET-Go](https://github.com/tphakala/birdnet-go)
+against) birds outside your window. A "warbler" is a small bird — matching the
+small ESP32 chip and the project's goal of being a lightweight streamer.
 
 Supports two microphone options:
 - **INMP441** — a cheap I2S digital microphone breakout, wired directly to the board.
 - **USB microphone** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
   into the board's native USB port.
 
-## Hardware
+No programming experience is required to use this — just follow the steps below.
 
-- ESP32-S3-DevKitC-1 (N8R2: 8MB flash, 2MB PSRAM)
-- Either an INMP441 breakout, or a UAC-class USB microphone
+## What you'll need
 
-### INMP441 wiring
+- An **ESP32-S3-DevKitC-1** board (N8R2: 8MB flash, 2MB PSRAM)
+- A USB cable to connect it to your computer
+- Either an **INMP441** microphone breakout, or a **UAC-class USB microphone**
+- A computer running Windows, macOS, or Linux
+
+## 1. Get the code
+
+If you've never used GitHub before, the easiest way is to download a ZIP file —
+no extra software required:
+
+1. On this repository's GitHub page, click the green **`<> Code`** button (near
+   the top right).
+2. Click **Download ZIP**.
+3. Find the downloaded ZIP file (usually in your `Downloads` folder) and
+   extract/unzip it. You should end up with a folder named `warbler32` (or
+   `warbler32-main`).
+
+<details>
+<summary>Prefer using Git instead?</summary>
+
+If you have [Git](https://git-scm.com/downloads) installed, you can clone the
+repository from a terminal instead:
+
+```bash
+git clone https://github.com/chrismyers2000/warbler32.git
+cd warbler32
+```
+</details>
+
+## 2. Install the tools
+
+This project uses **PlatformIO**, a free tool for building and flashing ESP32
+firmware. The easiest way to use it is through **VS Code**, a free code editor.
+
+1. Install [Visual Studio Code](https://code.visualstudio.com/) (download the
+   installer for your operating system and run it, accepting the defaults).
+2. Open VS Code.
+3. Click the **Extensions** icon in the left-hand sidebar (it looks like four
+   small squares), or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
+4. Search for **"PlatformIO IDE"** and click **Install**.
+5. Wait for the install to finish — this can take a few minutes. VS Code may
+   ask to reload/restart itself; let it.
+6. Once installed, a new alien-head icon will appear in the left sidebar —
+   that's PlatformIO.
+
+## 3. Open the project
+
+1. In VS Code, go to **File → Open Folder...**
+2. Select the `warbler32` folder from step 1 (the one containing `platformio.ini`).
+3. PlatformIO will automatically detect the project. Give it a minute — the
+   first time you open it, PlatformIO downloads the ESP32-S3 toolchain and
+   dependencies in the background (you'll see progress in the bottom status bar).
+
+## 4. Connect and flash the board
+
+1. Connect the ESP32-S3-DevKitC-1 to your computer with a USB cable, using the
+   port labeled **"UART"** (not "USB" — that port is only used later, for a USB
+   microphone).
+2. Click the PlatformIO alien-head icon in the sidebar.
+3. Under **PROJECT TASKS → esp32s3 → General**, click **Upload**.
+   - (If you prefer the command line, you can instead run `pio run -t upload`
+     from a terminal opened in the project folder.)
+4. PlatformIO will compile the firmware and flash it to the board — this takes
+   a minute or two the first time. When it finishes, you'll see
+   `[SUCCESS]` in the terminal output at the bottom of VS Code.
+
+### Troubleshooting the upload
+
+- **Windows**: if the board isn't detected, you may need to install the
+  [CP210x or CH340 USB driver](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
+  (whichever chip your board uses — check the sticker/silkscreen near the USB
+  port) so your computer recognizes it as a serial device.
+- **macOS**: similarly, install the CP210x/CH340 driver if the board doesn't
+  show up.
+- **Linux**: if you get a "Permission denied" error on the serial port, add
+  your user to the `dialout` group (`sudo usermod -aG dialout $USER`), then
+  log out and back in.
+- If PlatformIO can't find the board at all, try a different USB cable (some
+  are power-only and don't carry data) or a different USB port.
+
+## Wiring (INMP441 only — skip if using a USB microphone)
 
 | INMP441 pin | ESP32-S3 GPIO |
 |---|---|
@@ -22,21 +103,12 @@ Supports two microphone options:
 | SD  | 40 |
 | L/R | GND |
 
-### USB microphone
+## Wiring (USB microphone only — skip if using an INMP441)
 
 Plug the mic into the board's native **"USB"** port — not the **"UART"** port
-(that one's only for flashing/serial and can't act as a USB host). If the mic
-never gets detected, check whether your board has a **"USB-OTG"** solder
-jumper/pad that needs bridging — some DevKitC-1 revisions don't supply 5V to
-the native USB port unless it's bridged.
-
-## Flashing
-
-Requires [PlatformIO](https://platformio.org/).
-
-```bash
-pio run -t upload
-```
+used for flashing. If the mic never gets detected, check whether your board has
+a **"USB-OTG"** solder jumper/pad that needs bridging — some DevKitC-1 revisions
+don't supply 5V to the native USB port unless it's bridged.
 
 ## First-time WiFi setup
 
