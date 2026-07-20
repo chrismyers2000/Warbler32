@@ -7,6 +7,7 @@
 #include "rtsp_server.h"
 
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "nvs_flash.h"
 
 extern "C" void app_main(void)
@@ -44,6 +45,17 @@ extern "C" void app_main(void)
 
         // Start RTSP server — clients connect and get PCM L16 audio
         ESP_ERROR_CHECK(rtsp_server_start());
+    }
+
+    // First boot after a web OTA update: everything above came up, so commit
+    // this image. Skipping this (i.e. crashing before here) makes the
+    // bootloader roll back to the previous firmware on the next reset.
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t ota_state;
+    if (esp_ota_get_state_partition(running, &ota_state) == ESP_OK &&
+        ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        esp_ota_mark_app_valid_cancel_rollback();
+        ESP_LOGI("main", "OTA update confirmed valid");
     }
 
     // All work is done in tasks; app_main can return

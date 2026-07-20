@@ -15,6 +15,12 @@ CONFIG_PARTITION_TABLE_CUSTOM=n
 CONFIG_PARTITION_TABLE_TWO_OTA=n
 CONFIG_PARTITION_TABLE_SINGLE_APP=n
 
+# ---- OTA ----
+# A web-uploaded image that crashes before app_main finishes startup never
+# calls esp_ota_mark_app_valid_cancel_rollback(), so the bootloader falls
+# back to the previous working firmware on the next reset.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
 # ---- FreeRTOS ----
 # Larger default stack so we don't have to tune every task
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

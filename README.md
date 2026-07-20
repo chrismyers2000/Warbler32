@@ -38,8 +38,8 @@ If you have [Git](https://git-scm.com/downloads) installed, you can clone the
 repository from a terminal instead:
 
 ```bash
-git clone https://github.com/chrismyers2000/warbler32.git
-cd warbler32
+git clone https://github.com/chrismyers2000/Warbler32.git
+cd Warbler32
 ```
 </details>
 
@@ -145,6 +145,19 @@ at the RTSP URL for live bird ID.
 
 The config page also lets you switch between the INMP441 and USB microphone,
 adjust sample rate/gain/filtering, and watch a live audio level meter.
+
+## Updating the firmware over WiFi
+
+After the first USB flash, updates no longer need a cable. Build the new
+firmware (`pio run`), then on the config page's **Firmware** card choose
+`.pio/build/esp32s3/firmware.bin` and click **Upload & Install**. The device
+verifies the image, flashes it to a spare slot, and reboots into it —
+about 10 seconds total. Your WiFi and audio settings are kept.
+
+It's safe against bad updates: uploads that aren't a valid Warbler32
+ESP32-S3 image are rejected before anything is written, and if a new build
+crashes during startup the bootloader automatically boots the previous
+firmware again on the next reset.
 
 ## Factory reset
 

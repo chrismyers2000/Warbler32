@@ -8,6 +8,9 @@
 #include "esp_netif.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_ota_ops.h"
+#include "esp_app_desc.h"
+#include "esp_app_format.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -105,6 +108,17 @@ static const char *s_html =
     "<button type=\"button\" onclick=\"toggleMon(this)\""
     " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Start Monitor</button>"
     "</div>"
+    "<div class=\"card\" style=\"margin-top:16px\"><h2>Firmware</h2>"
+    "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Running <span style=\"color:#9ca3af\">%s</span>"
+    " &middot; built %s. Upload a new <code>firmware.bin</code> to update over WiFi &mdash; "
+    "the device reboots into it when the install finishes.</p>"
+    "<input type=\"file\" id=\"fw\" accept=\".bin\">"
+    "<div id=\"obw\" style=\"display:none;background:#374151;border-radius:4px;height:8px;margin-bottom:8px\">"
+    "<div id=\"ob\" style=\"background:#3b82f6;height:8px;border-radius:4px;width:0\"></div></div>"
+    "<p id=\"ost\" style=\"font-size:12px;color:#6b7280;margin:0 0 8px\"></p>"
+    "<button type=\"button\" id=\"obtn\" onclick=\"doOta()\""
+    " style=\"background:#374151\">Upload &amp; Install</button>"
+    "</div>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Danger Zone</h2>"
     "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Erases saved WiFi and audio "
     "settings and reboots into setup mode (broadcasting \"" WIFI_AP_SSID "\").</p>"
@@ -129,6 +143,31 @@ static const char *s_html =
     "fetch('/level').then(function(r){return r.json();})"
     ".then(function(j){h.push(j.p);if(h.length>50)h.shift();draw();});"
     "},150);b.textContent='Stop Monitor';}"
+    "};"
+    "window.doOta=function(){"
+    "var f=document.getElementById('fw').files[0];"
+    "if(!f){alert('Choose a firmware .bin file first.');return;}"
+    "if(!confirm('Install '+f.name+' ('+Math.round(f.size/1024)+' KB)? "
+    "The device reboots when the install finishes.'))return;"
+    "var b=document.getElementById('obtn'),st=document.getElementById('ost'),"
+    "bw=document.getElementById('obw'),bar=document.getElementById('ob');"
+    "b.disabled=true;bw.style.display='block';"
+    "var x=new XMLHttpRequest();"
+    "x.open('POST','/ota');"
+    "x.timeout=300000;"
+    "x.upload.onprogress=function(e){"
+    "if(!e.lengthComputable)return;"
+    "var p=Math.round(e.loaded*100/e.total);bar.style.width=p+'%%';"
+    "st.textContent=e.loaded<e.total?'Uploading\\u2026 '+p+'%%':'Verifying & installing\\u2026';"
+    "};"
+    "x.onload=function(){"
+    "if(x.status==200){st.textContent='Installed \\u2014 rebooting\\u2026';"
+    "setTimeout(function(){location.reload()},12000);}"
+    "else{st.textContent='Failed: '+x.responseText;b.disabled=false;}"
+    "};"
+    "x.onerror=x.ontimeout=function(){"
+    "st.textContent='Upload failed \\u2014 connection error.';b.disabled=false;};"
+    "x.send(f);"
     "};"
     "window.toggleGainShift=function(){"
     "var usb=document.getElementById('asrc').value=='1';"
@@ -231,10 +270,13 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     html_escape(g_config.wifi_ssid,     ssid_esc, sizeof(ssid_esc));
     html_escape(g_config.wifi_password, pass_esc, sizeof(pass_esc));
 
-    char *buf = malloc(8192);
+    const esp_app_desc_t *app = esp_app_get_description();
+
+    const size_t bufsz = 12288;
+    char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
-    int len = snprintf(buf, 8192, s_html,
+    int len = snprintf(buf, bufsz, s_html,
         status_line,
         name_esc,
         ssid_esc,
@@ -251,7 +293,15 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         (int)g_config.gain_mult,   (int)g_config.gain_mult,
         (int)g_config.hpf_freq, (int)g_config.hpf_freq,
         (int)g_config.noise_gate, (int)g_config.noise_gate,
-        (int)g_config.led_brightness, (int)g_config.led_brightness);
+        (int)g_config.led_brightness, (int)g_config.led_brightness,
+        app->version, app->date);
+
+    // snprintf returns the would-be length: if the page outgrows the buffer,
+    // send only what actually fits rather than trailing heap garbage.
+    if (len >= (int)bufsz) {
+        ESP_LOGE(TAG, "config page truncated (%d >= %u) — grow bufsz", len, (unsigned)bufsz);
+        len = bufsz - 1;
+    }
 
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, buf, len);
@@ -394,6 +444,124 @@ static esp_err_t reset_post_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// POST /ota — stream a raw firmware.bin into the inactive OTA slot
+// ---------------------------------------------------------------------------
+#define OTA_BUF_SIZE 4096
+
+// Bytes needed before the image can be sanity-checked: the app descriptor
+// sits right after the image header and the first segment header.
+#define OTA_DESC_END (sizeof(esp_image_header_t) + \
+                      sizeof(esp_image_segment_header_t) + \
+                      sizeof(esp_app_desc_t))
+
+static esp_err_t ota_fail(httpd_req_t *req, char *buf, esp_ota_handle_t handle,
+                          httpd_err_code_t code, const char *msg)
+{
+    ESP_LOGE(TAG, "OTA rejected: %s", msg);
+    if (handle) esp_ota_abort(handle);
+    free(buf);
+    httpd_resp_send_err(req, code, msg);
+    return ESP_FAIL;
+}
+
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    const esp_partition_t *update = esp_ota_get_next_update_partition(NULL);
+    if (!update)
+        return ota_fail(req, NULL, 0, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        "No OTA update partition found");
+
+    int total = req->content_len;
+    if (total < (int)OTA_DESC_END || total > (int)update->size)
+        return ota_fail(req, NULL, 0, HTTPD_400_BAD_REQUEST,
+                        "Bad upload size (not a firmware image?)");
+
+    char *buf = malloc(OTA_BUF_SIZE);
+    if (!buf)
+        return ota_fail(req, NULL, 0, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        "Out of memory");
+
+    ESP_LOGI(TAG, "OTA: %d bytes -> %s", total, update->label);
+
+    // Buffer the image prefix so the header can be checked before any flash
+    // is erased.
+    int have = 0, timeouts = 0;
+    while (have < (int)OTA_DESC_END) {
+        int n = httpd_req_recv(req, buf + have, OTA_BUF_SIZE - have);
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 5) continue;
+        if (n <= 0)
+            return ota_fail(req, buf, 0, HTTPD_400_BAD_REQUEST,
+                            "Upload interrupted");
+        have += n;
+        timeouts = 0;
+    }
+
+    const esp_image_header_t *hdr = (const esp_image_header_t *)buf;
+    const esp_app_desc_t *desc = (const esp_app_desc_t *)
+        (buf + sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t));
+
+    if (hdr->magic != ESP_IMAGE_HEADER_MAGIC ||
+        desc->magic_word != ESP_APP_DESC_MAGIC_WORD)
+        return ota_fail(req, buf, 0, HTTPD_400_BAD_REQUEST,
+                        "Not an ESP32 firmware image");
+    if (hdr->chip_id != ESP_CHIP_ID_ESP32S3)
+        return ota_fail(req, buf, 0, HTTPD_400_BAD_REQUEST,
+                        "Firmware is for a different chip (need ESP32-S3)");
+    if (strcmp(desc->project_name, esp_app_get_description()->project_name) != 0)
+        return ota_fail(req, buf, 0, HTTPD_400_BAD_REQUEST,
+                        "Not a Warbler32 firmware image");
+
+    ESP_LOGI(TAG, "OTA image: %s %s (%s)", desc->project_name, desc->version, desc->date);
+
+    // Erases the whole target region up front — takes a few seconds.
+    esp_ota_handle_t handle = 0;
+    esp_err_t err = esp_ota_begin(update, total, &handle);
+    if (err != ESP_OK)
+        return ota_fail(req, buf, 0, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        "Failed to start OTA (flash erase)");
+
+    int written = 0;
+    while (written < total) {
+        int n;
+        if (have > 0) {
+            n = have;            // prefix already received above
+            have = 0;
+        } else {
+            n = httpd_req_recv(req, buf, OTA_BUF_SIZE);
+            if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 5) continue;
+            if (n <= 0)
+                return ota_fail(req, buf, handle, HTTPD_400_BAD_REQUEST,
+                                "Upload interrupted");
+            timeouts = 0;
+        }
+        if (esp_ota_write(handle, buf, n) != ESP_OK)
+            return ota_fail(req, buf, handle, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Flash write failed");
+        written += n;
+    }
+
+    err = esp_ota_end(handle);   // full-image checksum + SHA validation
+    if (err != ESP_OK)
+        return ota_fail(req, buf, 0, HTTPD_400_BAD_REQUEST,
+                        err == ESP_ERR_OTA_VALIDATE_FAILED
+                            ? "Image verification failed (corrupt upload?)"
+                            : "Failed to finalize OTA");
+
+    if (esp_ota_set_boot_partition(update) != ESP_OK)
+        return ota_fail(req, buf, 0, HTTPD_500_INTERNAL_SERVER_ERROR,
+                        "Failed to set boot partition");
+
+    free(buf);
+    ESP_LOGI(TAG, "OTA complete, rebooting into %s", update->label);
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_send(req, "OK", 2);
+
+    xTaskCreate(reboot_task, "reboot", 1024, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // GET /level — audio peak level for the browser monitor
 // ---------------------------------------------------------------------------
 static esp_err_t level_get_handler(httpd_req_t *req)
@@ -415,6 +583,7 @@ esp_err_t web_server_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable  = true;
     cfg.max_uri_handlers  = 8;
+    cfg.stack_size        = 8192;   // esp_ota_end() image verification needs headroom
 
     httpd_handle_t server = NULL;
     esp_err_t ret = httpd_start(&server, &cfg);
@@ -435,10 +604,14 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t post_reset = {
         .uri = "/reset", .method = HTTP_POST, .handler = reset_post_handler,
     };
+    static const httpd_uri_t post_ota = {
+        .uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
     httpd_register_uri_handler(server, &post_reset);
+    httpd_register_uri_handler(server, &post_ota);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);
