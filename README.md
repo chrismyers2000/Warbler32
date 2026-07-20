@@ -158,16 +158,31 @@ your own monitoring.
 
 ## Updating the firmware over WiFi
 
-After the first USB flash, updates no longer need a cable. Build the new
-firmware (`pio run`), then on the config page's **Firmware** card choose
-`.pio/build/esp32s3/firmware.bin` and click **Upload & Install**. The device
-verifies the image, flashes it to a spare slot, and reboots into it —
-about 10 seconds total. Your WiFi and audio settings are kept.
+After the first USB flash, updates no longer need a cable — or even a
+computer. On the config page's **Firmware** card, click **Check for
+Updates**: the device asks GitHub for the latest release, automatically
+picks the build matching its own hardware (Quad or Octal PSRAM variant),
+and if it's newer, one click downloads and installs it with a progress
+bar. The device reboots into the new firmware; WiFi and audio settings
+are kept.
 
-It's safe against bad updates: uploads that aren't a valid Warbler32
-ESP32-S3 image are rejected before anything is written, and if a new build
-crashes during startup the bootloader automatically boots the previous
-firmware again on the next reset.
+There's also a manual fallback under "Manual update": build locally with
+`pio run` and upload `.pio/build/esp32s3/firmware.bin` directly.
+
+It's safe against bad updates: images that aren't a valid Warbler32
+ESP32-S3 build are rejected before anything is written, and if a new
+firmware crashes during startup the bootloader automatically boots the
+previous version again on the next reset.
+
+### Publishing a release (maintainers)
+
+```bash
+scripts/release.sh 1.0.0
+```
+
+Tags `v1.0.0`, builds both PSRAM variants, and publishes
+`warbler32-quad.bin` + `warbler32-oct.bin` as GitHub release assets —
+which is exactly what deployed devices look for.
 
 ## Factory reset
 
