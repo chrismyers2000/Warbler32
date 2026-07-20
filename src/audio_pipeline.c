@@ -21,6 +21,7 @@ static const char *TAG = "pipeline";
 typedef struct {
     RingbufHandle_t rb;
     bool            active;
+    bool            count_overruns;
 } pipeline_reader_t;
 
 static pipeline_reader_t s_readers[PIPELINE_MAX_READERS];
@@ -90,7 +91,8 @@ static void i2s_reader_task(void *arg)
                 if (dummy) vRingbufferReturnItem(s_readers[r].rb, dummy);
                 if (xRingbufferSend(s_readers[r].rb, pcm, bytes, 0) != pdTRUE)
                     ESP_LOGW(TAG, "reader %d buffer full, audio dropped", r);
-                atomic_fetch_add(&s_overruns, 1);
+                if (s_readers[r].count_overruns)
+                    atomic_fetch_add(&s_overruns, 1);
             }
         }
         xSemaphoreGive(s_readers_mtx);
@@ -121,9 +123,13 @@ esp_err_t audio_pipeline_start(void)
     return (ok == pdPASS) ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
-int audio_pipeline_subscribe(void)
+int audio_pipeline_subscribe(bool count_overruns)
 {
     int slot = -1;
+
+    // Pipeline never starts in setup-AP mode, but HTTP endpoints that
+    // subscribe (browser preview) are still reachable there.
+    if (s_readers_mtx == NULL) return -1;
 
     xSemaphoreTake(s_readers_mtx, portMAX_DELAY);
     for (int r = 0; r < PIPELINE_MAX_READERS; r++) {
@@ -131,6 +137,7 @@ int audio_pipeline_subscribe(void)
         if (s_readers[r].rb == NULL)
             s_readers[r].rb = create_ringbuf();
         if (s_readers[r].rb != NULL) {
+            s_readers[r].count_overruns = count_overruns;
             s_readers[r].active = true;
             slot = r;
         }
@@ -145,7 +152,7 @@ int audio_pipeline_subscribe(void)
 
 void audio_pipeline_unsubscribe(int reader)
 {
-    if (reader < 0 || reader >= PIPELINE_MAX_READERS) return;
+    if (reader < 0 || reader >= PIPELINE_MAX_READERS || s_readers_mtx == NULL) return;
 
     xSemaphoreTake(s_readers_mtx, portMAX_DELAY);
     s_readers[reader].active = false;

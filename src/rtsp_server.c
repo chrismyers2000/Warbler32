@@ -62,7 +62,7 @@ typedef struct {
     SemaphoreHandle_t rtp_stopped;
 } rtsp_client_slot_t;
 
-static rtsp_client_slot_t s_slots[PIPELINE_MAX_READERS];
+static rtsp_client_slot_t s_slots[RTSP_MAX_CLIENTS];
 static SemaphoreHandle_t  s_slots_mtx;
 static atomic_int s_connected = 0;
 static atomic_int s_streaming = 0;
@@ -355,7 +355,7 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
 
             } else if (strncmp(pos, "PLAY", 4) == 0) {
                 if (c->rtp_task == NULL) {
-                    c->reader = audio_pipeline_subscribe();
+                    c->reader = audio_pipeline_subscribe(true);
                     if (c->reader < 0) {
                         snprintf(resp, sizeof(resp),
                             "RTSP/1.0 453 Not Enough Bandwidth\r\n"
@@ -460,10 +460,10 @@ static void rtsp_listener_task(void *arg)
         .sin_port        = htons(RTSP_PORT),
     };
     bind(server_fd, (struct sockaddr *)&addr, sizeof(addr));
-    listen(server_fd, PIPELINE_MAX_READERS);
+    listen(server_fd, RTSP_MAX_CLIENTS);
 
     ESP_LOGI(TAG, "RTSP listening on port %d (max %d clients)",
-             RTSP_PORT, PIPELINE_MAX_READERS);
+             RTSP_PORT, RTSP_MAX_CLIENTS);
 
     esp_netif_ip_info_t ip_info;
     esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
@@ -489,7 +489,7 @@ static void rtsp_listener_task(void *arg)
 
         rtsp_client_slot_t *slot = NULL;
         xSemaphoreTake(s_slots_mtx, portMAX_DELAY);
-        for (int i = 0; i < PIPELINE_MAX_READERS; i++) {
+        for (int i = 0; i < RTSP_MAX_CLIENTS; i++) {
             if (!s_slots[i].in_use) {
                 s_slots[i].in_use    = true;
                 s_slots[i].client_fd = client_fd;
@@ -503,7 +503,7 @@ static void rtsp_listener_task(void *arg)
 
         if (slot == NULL) {
             ESP_LOGW(TAG, "rejecting client: %d sessions already active",
-                     PIPELINE_MAX_READERS);
+                     RTSP_MAX_CLIENTS);
             static const char busy[] =
                 "RTSP/1.0 453 Not Enough Bandwidth\r\nCSeq: 0\r\n\r\n";
             send(client_fd, busy, sizeof(busy) - 1, 0);
@@ -535,7 +535,7 @@ esp_err_t rtsp_server_start(void)
     s_slots_mtx = xSemaphoreCreateMutex();
     if (s_slots_mtx == NULL) return ESP_ERR_NO_MEM;
 
-    for (int i = 0; i < PIPELINE_MAX_READERS; i++) {
+    for (int i = 0; i < RTSP_MAX_CLIENTS; i++) {
         s_slots[i].id           = i + 1;
         s_slots[i].client_fd    = -1;
         s_slots[i].reader       = -1;

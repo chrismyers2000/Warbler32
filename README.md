@@ -131,8 +131,10 @@ confirm. Only does anything while the device is broadcasting the setup AP.
 ## Using it
 
 The config page has a **Device Name** field (default `warbler32`) — set it
-to whatever you like (letters, numbers, hyphens), useful for telling multiple
-devices apart. Once connected to your WiFi, the device is reachable at:
+to whatever you like (letters, numbers, hyphens). If you run more than one
+Warbler32, give each a unique name: two devices with the same name fight
+over the same `.local` address and you won't know which one you're talking
+to. Once connected to your WiFi, the device is reachable at:
 
 - **Config page**: `http://<name>.local/` (e.g. `http://warbler32.local/`)
 - **Stream**: `rtsp://<name>.local/audio`
@@ -146,7 +148,10 @@ handy for spot-checking in VLC while BirdNET-Go stays connected; a third
 connection is politely refused.
 
 The config page also lets you switch between the INMP441 and USB microphone,
-adjust sample rate/gain/filtering, and watch a live audio level meter. Audio
+adjust sample rate/gain/filtering, and watch a live audio level meter — plus
+a **Listen** button that plays the live mic audio right in your browser
+(sub-second latency), so you can position the mic and tune it by ear from a
+phone without opening VLC. Audio
 and LED tweaks (gain, high-pass filter, noise gate, brightness) apply the
 moment you hit Save — no reboot, no stream interruption. Changing the name,
 WiFi, input source, or sample rate still reboots the device.

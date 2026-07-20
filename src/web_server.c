@@ -13,6 +13,7 @@
 
 #include "esp_http_server.h"
 #include "esp_netif.h"
+#include "lwip/sockets.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_app_desc.h"
@@ -23,6 +24,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 static const char *TAG = "web";
 
@@ -124,6 +126,8 @@ static const char *s_html =
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 4px\">Peak level &mdash; green &lt;55%%, amber &lt;80%%, red = clipping.</p>"
     "<button type=\"button\" onclick=\"toggleMon(this)\""
     " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Start Monitor</button>"
+    "<button type=\"button\" id=\"lsnbtn\" onclick=\"toggleListen()\""
+    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 0 8px\">Listen</button>"
     "</div>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Firmware</h2>"
     "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Running <span style=\"color:#9ca3af\">%s</span>"
@@ -186,6 +190,60 @@ static const char *s_html =
     "}"
     "setInterval(stPoll,2000);stPoll();"
     "var $=function(i){return document.getElementById(i);};"
+    "var lsnCtx=null,lsnAbort=null,lsnEl=null;"
+    "function lsnStop(){"
+    "if(lsnAbort){try{lsnAbort.abort();}catch(e){}lsnAbort=null;}"
+    "if(lsnEl){try{lsnEl.pause();lsnEl.srcObject=null;}catch(e){}lsnEl=null;}"
+    "if(lsnCtx){try{lsnCtx.close();}catch(e){}lsnCtx=null;}"
+    "$('lsnbtn').textContent='Listen';"
+    "}"
+    "window.toggleListen=function(){"
+    "if(lsnAbort){lsnStop();return;}"
+    "var b=$('lsnbtn');"
+    // iOS only unmutes audio objects created synchronously inside the tap
+    // gesture, so the whole output path (context + media element) is built
+    // here, before any network I/O. Routing through an <audio> element
+    // also bypasses the iPhone ring/silent switch, which mutes bare
+    // WebAudio output.
+    "lsnCtx=new (window.AudioContext||window.webkitAudioContext)();"
+    "if(lsnCtx.resume)lsnCtx.resume();"
+    "var dst=lsnCtx.createMediaStreamDestination();"
+    "lsnEl=document.createElement('audio');"
+    "lsnEl.setAttribute('playsinline','');"
+    "lsnEl.srcObject=dst.stream;"
+    "lsnEl.play();"
+    "lsnAbort=new AbortController();"
+    "b.textContent='Connecting\\u2026';"
+    "fetch('/listen',{signal:lsnAbort.signal}).then(function(r){"
+    "if(!r.ok){return r.text().then(function(t){throw t||('HTTP '+r.status);});}"
+    "var sr=parseInt(r.headers.get('X-Sample-Rate'))||48000;"
+    "var next=0,carry=new Uint8Array(0),rd=r.body.getReader();"
+    "b.textContent='Stop';"
+    "(function pump(){"
+    "rd.read().then(function(res){"
+    "if(res.done||!lsnCtx){lsnStop();return;}"
+    "var d;"
+    "if(carry.length){d=new Uint8Array(carry.length+res.value.length);"
+    "d.set(carry);d.set(res.value,carry.length);}else{d=res.value;}"
+    "var n=d.length>>1;"
+    "if(n>0){"
+    "var v=new DataView(d.buffer,d.byteOffset,n*2),f=new Float32Array(n);"
+    "for(var i=0;i<n;i++)f[i]=v.getInt16(i*2,false)/32768;"
+    // buffers keep the stream's own sample rate; WebAudio resamples to the
+    // context rate on playback, so no {sampleRate} option is needed (iOS
+    // Safari historically mishandles it anyway)
+    "var ab=lsnCtx.createBuffer(1,n,sr);"
+    "if(ab.copyToChannel)ab.copyToChannel(f,0);else ab.getChannelData(0).set(f);"
+    "var s=lsnCtx.createBufferSource();s.buffer=ab;s.connect(dst);"
+    "if(next<lsnCtx.currentTime+0.05)next=lsnCtx.currentTime+0.3;"
+    "s.start(next);next+=n/sr;"
+    "}"
+    "carry=(d.length&1)?d.slice(n*2):new Uint8Array(0);"
+    "pump();"
+    "}).catch(function(){lsnStop();});"
+    "})();"
+    "}).catch(function(e){lsnStop();if(e&&e.name!=='AbortError')alert('Preview failed: '+e);});"
+    "};"
     "window.doChk=function(){"
     "var b=$('chkbtn'),st=$('chkst');"
     "b.disabled=true;st.textContent='Checking\\u2026';$('instbtn').style.display='none';"
@@ -688,6 +746,82 @@ static esp_err_t level_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /listen — live PCM preview stream (raw big-endian L16, chunked)
+//
+// The stream runs until the browser disconnects, so it must not occupy the
+// single httpd task: the handler detaches the request with
+// httpd_req_async_handler_begin() and hands it to a small worker task.
+// ---------------------------------------------------------------------------
+static atomic_bool s_preview_busy = false;
+
+static void listen_stream_task(void *arg)
+{
+    httpd_req_t *req = (httpd_req_t *)arg;
+    // ~20 ms of audio per chunk at 48 kHz; smaller rates just chunk shorter
+    char buf[1920];
+
+    int reader = audio_pipeline_subscribe(false);
+    if (reader < 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "No audio stream slot free");
+        goto out;
+    }
+
+    // Detect a vanished browser quickly: without this, a dead connection
+    // blocks the chunk send for the full default socket timeout.
+    int fd = httpd_req_to_sockfd(req);
+    if (fd >= 0) {
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+
+    char sr[16];
+    snprintf(sr, sizeof(sr), "%lu", (unsigned long)g_config.sample_rate);
+    httpd_resp_set_type(req, "application/octet-stream");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Sample-Rate", sr);
+
+    ESP_LOGI(TAG, "preview stream started");
+    for (;;) {
+        size_t got = audio_pipeline_read(reader, (uint8_t *)buf, sizeof(buf), 200);
+        if (got == 0) continue;
+        if (httpd_resp_send_chunk(req, buf, got) != ESP_OK) break;  // client gone
+    }
+    ESP_LOGI(TAG, "preview stream ended");
+
+    audio_pipeline_unsubscribe(reader);
+    httpd_resp_send_chunk(req, NULL, 0);
+out:
+    httpd_req_async_handler_complete(req);
+    atomic_store(&s_preview_busy, false);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t listen_get_handler(httpd_req_t *req)
+{
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_preview_busy, &expected, true)) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Preview already in use");
+        return ESP_FAIL;
+    }
+
+    httpd_req_t *async_req;
+    if (httpd_req_async_handler_begin(req, &async_req) != ESP_OK) {
+        atomic_store(&s_preview_busy, false);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Async setup failed");
+        return ESP_FAIL;
+    }
+    if (xTaskCreate(listen_stream_task, "preview", 4096, async_req, 3, NULL) != pdPASS) {
+        httpd_req_async_handler_complete(async_req);
+        atomic_store(&s_preview_busy, false);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // GET /status — device diagnostics for the web UI (and anything else)
 // ---------------------------------------------------------------------------
 static esp_err_t status_get_handler(httpd_req_t *req)
@@ -702,16 +836,17 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
-        "\"overruns\":%u,\"peak\":%d,\"version\":\"%s\",\"variant\":\"%s\"}",
+        "\"overruns\":%u,\"peak\":%d,\"preview\":%d,\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size(),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
         rssi,
-        rtsp_server_client_count(), PIPELINE_MAX_READERS,
+        rtsp_server_client_count(), RTSP_MAX_CLIENTS,
         rtsp_server_streaming_count(),
         (unsigned)audio_pipeline_get_overruns(),
         audio_pipeline_get_peak_pct(),
+        atomic_load(&s_preview_busy) ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 
     httpd_resp_set_type(req, "application/json");
@@ -727,7 +862,7 @@ esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable  = true;
-    cfg.max_uri_handlers  = 12;
+    cfg.max_uri_handlers  = 16;
     cfg.stack_size        = 12288;  // TLS handshake runs in-handler for /update/check
 
     httpd_handle_t server = NULL;
@@ -764,6 +899,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_upd_progress = {
         .uri = "/update/progress", .method = HTTP_GET, .handler = update_progress_get_handler,
     };
+    static const httpd_uri_t get_listen = {
+        .uri = "/listen", .method = HTTP_GET, .handler = listen_get_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
@@ -773,6 +911,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &post_upd_check);
     httpd_register_uri_handler(server, &post_upd_install);
     httpd_register_uri_handler(server, &get_upd_progress);
+    httpd_register_uri_handler(server, &get_listen);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);

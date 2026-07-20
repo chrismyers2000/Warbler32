@@ -83,7 +83,8 @@
 // =============================================================================
 // RTSP / RTP
 // =============================================================================
-#define RTSP_PORT     554
+#define RTSP_PORT         554
+#define RTSP_MAX_CLIENTS  2   // simultaneous RTSP clients (each takes a pipeline reader)
 #define RTP_PAYLOAD   11           // PT 11 = L16 in RFC 3551
 // RTP packet carries this many samples (20 ms at 48 kHz = 960 samples; 320 at 16 kHz)
 #define RTP_SAMPLES_PER_PACKET  960
@@ -101,7 +102,7 @@
 // holding ~500 ms of audio to absorb network jitter
 // =============================================================================
 #define PIPELINE_BUF_BYTES   (AUDIO_SAMPLE_RATE * AUDIO_BITS_PER_SAMPLE / 8 / 2)
-#define PIPELINE_MAX_READERS 2   // also the max simultaneous RTSP clients
+#define PIPELINE_MAX_READERS 3   // RTSP_MAX_CLIENTS + 1 browser preview stream
 
 // =============================================================================
 // NeoPixel status LED (WS2812B on GPIO 48 = onboard RGB LED)
