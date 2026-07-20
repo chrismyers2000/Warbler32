@@ -183,7 +183,7 @@ static int build_sdp(char *buf, size_t size, const char *server_ip)
     return snprintf(buf, size,
         "v=0\r\n"
         "o=- 0 0 IN IP4 %s\r\n"
-        "s=BirdListener\r\n"
+        "s=Warbler32\r\n"
         "c=IN IP4 %s\r\n"
         "t=0 0\r\n"
         "m=audio 0 RTP/AVP %d\r\n"

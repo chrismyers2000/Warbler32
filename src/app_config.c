@@ -6,7 +6,7 @@
 #include <string.h>
 
 static const char *TAG = "config";
-#define NVS_NS "birdlsnr"
+#define NVS_NS "warbler32"
 
 app_config_t g_config;
 

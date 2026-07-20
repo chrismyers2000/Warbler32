@@ -1,4 +1,4 @@
-# BirdListener
+# Warbler32
 
 ESP32-S3 firmware that captures audio from a microphone and streams it live over
 RTSP, for listening to (or running BirdNET-Go against) birds outside your window.
@@ -43,8 +43,8 @@ pio run -t upload
 The device ships with no WiFi configured. On first boot (and any time it can't
 join a saved network) it broadcasts its own setup network:
 
-1. On your phone or laptop, connect to the WiFi network **`BirdListener-Setup`**
-   (password: **`birdlistener`**).
+1. On your phone or laptop, connect to the WiFi network **`Warbler32-Setup`**
+   (password: **`warbler32`**).
 2. Browse to **`http://192.168.4.1/`**.
 3. Enter your home WiFi's SSID and password, then **Save & Reboot**.
 
@@ -58,11 +58,11 @@ confirm. Only does anything while the device is broadcasting the setup AP.
 
 ## Using it
 
-The config page has a **Device Name** field (default `birdlistener`) — set it
+The config page has a **Device Name** field (default `warbler32`) — set it
 to whatever you like (letters, numbers, hyphens), useful for telling multiple
 devices apart. Once connected to your WiFi, the device is reachable at:
 
-- **Config page**: `http://<name>.local/` (e.g. `http://birdlistener.local/`)
+- **Config page**: `http://<name>.local/` (e.g. `http://warbler32.local/`)
 - **Stream**: `rtsp://<name>.local/audio`
 
 (If your network doesn't support mDNS/`.local` names, check your router's

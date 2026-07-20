@@ -13,13 +13,13 @@
 // Fallback setup AP the device broadcasts when it can't join a saved network
 // (blank credentials, wrong password, router out of range, etc). Connect to
 // this network and browse to 192.168.4.1 to configure the real WiFi network.
-#define WIFI_AP_SSID      "BirdListener-Setup"
-#define WIFI_AP_PASSWORD  "birdlistener"
+#define WIFI_AP_SSID      "Warbler32-Setup"
+#define WIFI_AP_PASSWORD  "warbler32"
 
 // mDNS hostname once connected to a real network — reachable at
 // http://<name>.local/. User-configurable via the web UI; this is just the
 // fallback for a fresh device or an emptied-out name field.
-#define DEVICE_NAME_DEFAULT  "birdlistener"
+#define DEVICE_NAME_DEFAULT  "warbler32"
 
 // =============================================================================
 // BOOT button (GPIO0) gestures — checked only while the app is already
