@@ -53,7 +53,17 @@ static void i2s_reader_task(void *arg)
 
     for (;;) {
         size_t got = s_mic_read(pcm, RTP_SAMPLES_PER_PACKET);
-        if (got == 0) continue;
+        if (got == 0) {
+            // A backend returning 0 with no internal blocking (e.g. USB
+            // mic disconnected mid-stream — usb_mic_read() checks a null
+            // handle and returns instantly) would otherwise busy-spin this
+            // pinned task at full priority, starving the idle task on its
+            // core and tripping the watchdog. I2S never hits this path
+            // (its read call always blocks internally), but this guards
+            // any backend that can return 0 without blocking.
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
 
         // Track peak amplitude for the level monitor
         int16_t pk = 0;

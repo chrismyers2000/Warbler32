@@ -47,6 +47,12 @@ static void driver_event_cb(uint8_t addr, uint8_t iface_num,
     }
 }
 
+// NOTE: a mid-stream disconnect is only logged, not actively recovered —
+// see memory/project notes on why (attempting to call
+// uac_host_device_close() synchronously from this callback to avoid
+// leaking the interface struct triggered an interrupt watchdog panic,
+// apparently racing the driver's own in-flight transfer cleanup). A reboot
+// is currently the only way to pick the mic back up after a real unplug.
 static void device_event_cb(uac_host_device_handle_t handle,
                              const uac_host_device_event_t event, void *arg)
 {
