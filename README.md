@@ -7,8 +7,7 @@ Supports these microphone options:
 - **SPH0645** — Adafruit's I2S MEMS microphone breakout, same wiring as the INMP441
   (select the model on the config page).
 - **USB microphone (Cleaner Audio)** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
-  into the board's native USB port. This includes cheap CM108-based USB sound card dongles
-  (mic input only — the speaker output is ignored).
+  into the board's native USB port.
 
 No programming experience is required to use this — just follow the steps below.
 
@@ -121,10 +120,13 @@ used for flashing. If the mic never gets detected, check whether your board has
 a **"USB-OTG"** solder jumper/pad that needs bridging — some DevKitC-1 revisions
 don't supply 5V to the native USB port unless it's bridged.
 
-This also works with generic **CM108-based USB sound card dongles** (common,
-cheap, widely sold for PC headsets/ham radio interfaces) — no special
-configuration needed, since it's just another standard UAC 1.0 device. Only
-the mic input is used; the speaker output is ignored.
+**CM108-based USB sound card dongles** (common, cheap, widely sold for PC
+headsets/ham radio interfaces) enumerate fine as a generic UAC 1.0 device,
+but **may produce audible crackling** on this firmware — testing found its
+adaptive-clock audio endpoint isn't well handled by the ESP32 USB Audio
+driver used here. It works cleanly on other hosts (e.g. a Raspberry Pi);
+on this board, treat it as untested/may-not-work rather than a supported
+option.
 
 ## First-time WiFi setup
 
