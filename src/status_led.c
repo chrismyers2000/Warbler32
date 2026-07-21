@@ -2,6 +2,7 @@
 #include "app_config.h"
 #include "config.h"
 #include "mic_health.h"
+#include "audio_pipeline.h"
 
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
@@ -104,10 +105,11 @@ static void led_task(void *arg)
 
         led_state_t state = (led_state_t)atomic_load(&s_state);
 
-        // A dead mic overrides the two "all is well" states with a magenta
-        // blink; WiFi/setup problems are more urgent and keep their patterns.
+        // A dead or missing mic overrides the two "all is well" states with
+        // a magenta blink; WiFi/setup problems are more urgent and keep
+        // their patterns.
         if ((state == LED_CONNECTED || state == LED_STREAMING) &&
-            !mic_health_ok()) {
+            (!mic_health_ok() || !audio_pipeline_is_active())) {
             if (tick % 10 == 0) {
                 toggle = !toggle;
                 if (toggle) ws2812_set(dim(255), 0, dim(255));

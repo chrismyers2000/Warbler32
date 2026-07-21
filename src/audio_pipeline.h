@@ -9,7 +9,14 @@
 extern "C" {
 #endif
 
+// Starts the mic reader task if a mic is found immediately; otherwise
+// returns ESP_OK anyway and keeps retrying in the background (see
+// audio_pipeline_is_active()) rather than failing boot for a condition
+// that's environmental, not a firmware bug.
 esp_err_t audio_pipeline_start(void);
+
+// True once a mic has been found and the reader task is running.
+bool audio_pipeline_is_active(void);
 
 // Each streaming client subscribes to get its own ring buffer (starts
 // empty), reads from it, and unsubscribes when done. Returns a reader

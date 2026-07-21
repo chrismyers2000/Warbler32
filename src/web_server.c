@@ -207,7 +207,8 @@ static const char *s_html =
     "document.getElementById('stStr').textContent=j.streaming?j.streaming+' active':'no';"
     "document.getElementById('stOvr').textContent=j.overruns;"
     "var sm=document.getElementById('stMic');"
-    "if(j.mic){sm.textContent='OK';sm.style.color='';}"
+    "if(!j.mic_present){sm.textContent='NO MIC';sm.style.color='#f87171';}"
+    "else if(j.mic){sm.textContent='OK';sm.style.color='';}"
     "else{sm.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color='#f87171';}"
     "}).catch(function(){});"
     "}"
@@ -933,7 +934,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
         "\"overruns\":%u,\"peak\":%d,\"preview\":%d,"
-        "\"mic\":%d,\"mic_silent\":%u,\"version\":\"%s\",\"variant\":\"%s\"}",
+        "\"mic\":%d,\"mic_silent\":%u,\"mic_present\":%d,"
+        "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size(),
@@ -945,6 +947,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         audio_pipeline_get_peak_pct(),
         atomic_load(&s_preview_busy) ? 1 : 0,
         mic_health_ok() ? 1 : 0, (unsigned)mic_health_silent_secs(),
+        audio_pipeline_is_active() ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 
     httpd_resp_set_type(req, "application/json");

@@ -150,3 +150,8 @@
 #define TASK_USB_STACK      4096
 #define TASK_USB_PRIORITY   5
 #define TASK_USB_CORE       1
+
+// Background mic-retry task (only spawned if no mic is found at boot)
+#define TASK_MIC_RETRY_STACK    3072
+#define TASK_MIC_RETRY_PRIORITY 2
+#define TASK_MIC_RETRY_CORE     1

@@ -29,6 +29,7 @@ static SemaphoreHandle_t s_readers_mtx = NULL;
 
 static volatile int16_t s_peak = 0;
 static atomic_uint      s_overruns = 0;
+static atomic_bool      s_active = false;
 static size_t (*s_mic_read)(int16_t *buf, size_t count) = i2s_mic_read;
 
 static RingbufHandle_t create_ringbuf(void)
@@ -99,11 +100,12 @@ static void i2s_reader_task(void *arg)
     }
 }
 
-esp_err_t audio_pipeline_start(void)
+// Inits the configured mic and spawns the reader task. Returns
+// ESP_ERR_NOT_FOUND/ESP_ERR_NOT_SUPPORTED for hardware-absent/mismatched
+// conditions (no device, or no alt setting matches the configured sample
+// rate) — those are retried by the caller rather than treated as fatal.
+static esp_err_t mic_start_and_spawn_reader(void)
 {
-    s_readers_mtx = xSemaphoreCreateMutex();
-    if (s_readers_mtx == NULL) return ESP_ERR_NO_MEM;
-
     esp_err_t ret;
     if (g_config.audio_source == AUDIO_SOURCE_USB) {
         s_mic_read = usb_mic_read;
@@ -119,8 +121,52 @@ esp_err_t audio_pipeline_start(void)
         TASK_I2S_STACK, NULL,
         TASK_I2S_PRIORITY, NULL,
         TASK_I2S_CORE);
+    if (ok != pdPASS) return ESP_ERR_NO_MEM;
 
-    return (ok == pdPASS) ? ESP_OK : ESP_ERR_NO_MEM;
+    atomic_store(&s_active, true);
+    return ESP_OK;
+}
+
+static void mic_retry_task(void *arg)
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+
+        esp_err_t ret = mic_start_and_spawn_reader();
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "microphone found, audio pipeline started");
+            vTaskDelete(NULL);
+        } else if (ret != ESP_ERR_NOT_FOUND && ret != ESP_ERR_NOT_SUPPORTED) {
+            ESP_LOGW(TAG, "mic retry failed: %s", esp_err_to_name(ret));
+        }
+    }
+}
+
+esp_err_t audio_pipeline_start(void)
+{
+    s_readers_mtx = xSemaphoreCreateMutex();
+    if (s_readers_mtx == NULL) return ESP_ERR_NO_MEM;
+
+    esp_err_t ret = mic_start_and_spawn_reader();
+    if (ret == ESP_OK) return ESP_OK;
+
+    if (ret == ESP_ERR_NOT_FOUND || ret == ESP_ERR_NOT_SUPPORTED) {
+        ESP_LOGW(TAG, "no usable mic found (%s) — WiFi/web UI stay up, retrying "
+                      "in the background", esp_err_to_name(ret));
+        xTaskCreatePinnedToCore(
+            mic_retry_task, "mic_retry",
+            TASK_MIC_RETRY_STACK, NULL,
+            TASK_MIC_RETRY_PRIORITY, NULL,
+            TASK_MIC_RETRY_CORE);
+        return ESP_OK;
+    }
+
+    return ret;
+}
+
+bool audio_pipeline_is_active(void)
+{
+    return atomic_load(&s_active);
 }
 
 int audio_pipeline_subscribe(bool count_overruns)

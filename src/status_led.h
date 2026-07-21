@@ -14,7 +14,9 @@ typedef enum {
     LED_SETUP,        // red blink         — broadcasting the setup AP
 } led_state_t;
 // Note: CONNECTED/STREAMING render as a magenta blink instead while the
-// mic-health detector reports a flatlined mic (see mic_health.h).
+// mic-health detector reports a flatlined mic (see mic_health.h), or while
+// no mic has been found yet (see audio_pipeline_is_active() in
+// audio_pipeline.h).
 
 // Initialise RMT + WS2812B and start the blink task. Call once from app_main.
 esp_err_t status_led_init(void);

@@ -23,6 +23,7 @@ static uac_host_device_handle_t s_dev      = NULL;
 static QueueHandle_t            s_connect_q = NULL;
 static audio_dsp_state_t        s_dsp;
 static uint8_t                  s_channels  = 1;
+static bool                     s_host_ready = false;
 
 // Pumps USB Host Library events. Required for every USB Host application,
 // regardless of which class driver(s) are installed on top.
@@ -96,36 +97,46 @@ static bool find_alt_setting(uac_host_dev_info_t *dev_info, uac_host_dev_alt_par
 esp_err_t usb_mic_init(void)
 {
     audio_dsp_init(&s_dsp);
+    esp_err_t ret;
 
-    usb_host_config_t host_config = {
-        .skip_phy_setup = false,
-        .intr_flags     = ESP_INTR_FLAG_LEVEL1,
-    };
-    esp_err_t ret = usb_host_install(&host_config);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    // The USB/UAC host stack can only be installed once per boot — retrying
+    // usb_mic_init() when no mic is found yet (e.g. from the background
+    // retry task in audio_pipeline.c) must skip straight to the wait-for-
+    // device step below rather than re-running this one-time setup, or
+    // usb_host_install() fails with ESP_ERR_INVALID_STATE on every retry.
+    if (!s_host_ready) {
+        usb_host_config_t host_config = {
+            .skip_phy_setup = false,
+            .intr_flags     = ESP_INTR_FLAG_LEVEL1,
+        };
+        ret = usb_host_install(&host_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "usb_host_install failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
 
-    BaseType_t ok = xTaskCreatePinnedToCore(usb_lib_task, "usb_lib",
-        TASK_USB_STACK, NULL, TASK_USB_PRIORITY, NULL, TASK_USB_CORE);
-    if (ok != pdPASS) return ESP_ERR_NO_MEM;
+        BaseType_t ok = xTaskCreatePinnedToCore(usb_lib_task, "usb_lib",
+            TASK_USB_STACK, NULL, TASK_USB_PRIORITY, NULL, TASK_USB_CORE);
+        if (ok != pdPASS) return ESP_ERR_NO_MEM;
 
-    s_connect_q = xQueueCreate(1, sizeof(rx_connected_t));
-    if (!s_connect_q) return ESP_ERR_NO_MEM;
+        s_connect_q = xQueueCreate(1, sizeof(rx_connected_t));
+        if (!s_connect_q) return ESP_ERR_NO_MEM;
 
-    uac_host_driver_config_t driver_config = {
-        .create_background_task = true,
-        .task_priority           = TASK_USB_PRIORITY,
-        .stack_size              = TASK_USB_STACK,
-        .core_id                 = TASK_USB_CORE,
-        .callback                = driver_event_cb,
-        .callback_arg            = NULL,
-    };
-    ret = uac_host_install(&driver_config);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "uac_host_install failed: %s", esp_err_to_name(ret));
-        return ret;
+        uac_host_driver_config_t driver_config = {
+            .create_background_task = true,
+            .task_priority           = TASK_USB_PRIORITY,
+            .stack_size              = TASK_USB_STACK,
+            .core_id                 = TASK_USB_CORE,
+            .callback                = driver_event_cb,
+            .callback_arg            = NULL,
+        };
+        ret = uac_host_install(&driver_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "uac_host_install failed: %s", esp_err_to_name(ret));
+            return ret;
+        }
+
+        s_host_ready = true;
     }
 
     ESP_LOGI(TAG, "waiting for USB microphone...");
