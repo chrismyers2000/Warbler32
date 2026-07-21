@@ -2,6 +2,7 @@
 #include "app_config.h"
 #include "config.h"
 #include "audio_dsp.h"
+#include "audio_pipeline.h"
 
 #include "esp_log.h"
 #include "esp_intr_alloc.h"
@@ -47,12 +48,14 @@ static void driver_event_cb(uint8_t addr, uint8_t iface_num,
     }
 }
 
-// NOTE: a mid-stream disconnect is only logged, not actively recovered —
-// see memory/project notes on why (attempting to call
-// uac_host_device_close() synchronously from this callback to avoid
-// leaking the interface struct triggered an interrupt watchdog panic,
-// apparently racing the driver's own in-flight transfer cleanup). A reboot
-// is currently the only way to pick the mic back up after a real unplug.
+// Two attempts at auto-recovering here (calling uac_host_device_close()
+// synchronously in this callback, then from a separate deferred task
+// instead) both crashed the device — an interrupt watchdog panic and a
+// spinlock_acquire assertion respectively. This is a real fragility in
+// the vendored usb_host_uac driver around closing a device after its own
+// disconnect handling, not something safe to work around without a much
+// deeper look at that component (or an upstream fix). Left as log-only;
+// a reboot is the only way to pick the mic back up after a real unplug.
 static void device_event_cb(uac_host_device_handle_t handle,
                              const uac_host_device_event_t event, void *arg)
 {
@@ -60,6 +63,7 @@ static void device_event_cb(uac_host_device_handle_t handle,
     case UAC_HOST_DRIVER_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "USB microphone disconnected");
         s_dev = NULL;
+        audio_pipeline_mark_inactive();
         break;
     case UAC_HOST_DEVICE_EVENT_TRANSFER_ERROR:
         ESP_LOGW(TAG, "USB microphone transfer error");

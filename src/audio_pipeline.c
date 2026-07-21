@@ -179,6 +179,11 @@ bool audio_pipeline_is_active(void)
     return atomic_load(&s_active);
 }
 
+void audio_pipeline_mark_inactive(void)
+{
+    atomic_store(&s_active, false);
+}
+
 int audio_pipeline_subscribe(bool count_overruns)
 {
     int slot = -1;

@@ -120,9 +120,14 @@
 // =============================================================================
 // Audio pipeline ring buffers (allocated in PSRAM)
 // Each subscriber (one per streaming RTSP client) gets its own buffer
-// holding ~500 ms of audio to absorb network jitter
+// holding ~2s of audio to absorb network jitter. Sized to comfortably
+// exceed send_all()'s own 1.5s max-stall retry budget in rtsp_server.c —
+// at the previous ~500ms buffer, any TCP stall past 500ms (weak WiFi,
+// congestion) started dropping whole audio chunks well before send_all()
+// gave up on the connection, which is audible as clicking/crackling.
+// Negligible PSRAM cost either way (a few hundred KB across all readers).
 // =============================================================================
-#define PIPELINE_BUF_BYTES   (AUDIO_SAMPLE_RATE * AUDIO_BITS_PER_SAMPLE / 8 / 2)
+#define PIPELINE_BUF_BYTES   (AUDIO_SAMPLE_RATE * AUDIO_BITS_PER_SAMPLE / 8 * 2)
 #define PIPELINE_MAX_READERS 3   // RTSP_MAX_CLIENTS + 1 browser preview stream
 
 // =============================================================================

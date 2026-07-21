@@ -132,7 +132,11 @@ static bool rtp_send_packet(rtp_session_t *s, const uint8_t *payload, size_t len
     hdr->timestamp = htonl(s->timestamp);
     hdr->ssrc      = htonl(s->ssrc);
 
-    s->timestamp += RTP_SAMPLES_PER_PACKET;
+    // Advance by the actual sample count delivered, not the nominal packet
+    // size — a short read (e.g. right after a client subscribes, before
+    // the ring buffer has a full packet queued) would otherwise desync the
+    // RTP clock from the real audio position.
+    s->timestamp += len / sizeof(int16_t);
 
     memcpy(pkt + offset + sizeof(rtp_header_t), payload, len);
 

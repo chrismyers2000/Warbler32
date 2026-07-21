@@ -170,6 +170,16 @@ static void event_handler(void *arg, esp_event_base_t base,
         s_retry_count = 0;
         status_led_set(LED_CONNECTED);
 
+        // WiFi modem-sleep power save (IDF default: WIFI_PS_MIN_MODEM) puts
+        // the radio to sleep between beacons, waking only on the DTIM
+        // interval (~100ms here) — fine for idle traffic, but it injects a
+        // periodic ~100ms delivery stall into anything latency-sensitive.
+        // For continuous RTP/HTTP audio streaming that shows up as a
+        // rhythmic glitch roughly at the DTIM rate. This device is always
+        // mains/battery powered for streaming, not battery-idle, so the
+        // power saved isn't worth the audio artifact.
+        esp_wifi_set_ps(WIFI_PS_NONE);
+
         mdns_init();
         mdns_hostname_set(g_config.device_name);
         mdns_instance_name_set(g_config.device_name);
