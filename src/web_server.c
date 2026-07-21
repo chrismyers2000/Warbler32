@@ -87,7 +87,7 @@ static const char *s_html =
     "<option value=\"1\"%s>USB Microphone</option>"
     "</select>"
     "<label class=\"tip\" data-tip=\"Audio capture frequency. Higher = better quality but more CPU load. 16 kHz is enough for BirdNET-Go; 48 kHz is full studio quality.\">Sample Rate</label>"
-    "<select name=\"sample_rate\">"
+    "<select name=\"sample_rate\" id=\"srSel\" onchange=\"drawHpf()\">"
     "<option value=\"8000\"%s>8 kHz</option>"
     "<option value=\"16000\"%s>16 kHz</option>"
     "<option value=\"22050\"%s>22.05 kHz</option>"
@@ -104,12 +104,28 @@ static const char *s_html =
     " oninput=\"mv.textContent=this.value\"></div>"
     "<div class=\"row\">"
     "<div><label class=\"tip\" data-tip=\"High-pass filter cutoff. 0 = off. Removes DC offset and low-frequency rumble below this frequency. Try 80-200 Hz outdoors to cut wind noise.\">HPF Cutoff &nbsp;<span class=\"val\" id=\"hpfv\">%d</span> Hz</label>"
-    "<input type=\"range\" name=\"hpf_freq\" min=\"0\" max=\"1000\" step=\"10\" value=\"%d\""
-    " oninput=\"hpfv.textContent=this.value==0?'Off':this.value\"></div>"
+    "<input type=\"range\" name=\"hpf_freq\" id=\"hpfIn\" min=\"0\" max=\"1000\" step=\"10\" value=\"%d\""
+    " oninput=\"hpfv.textContent=this.value==0?'Off':this.value;drawHpf()\"></div>"
     "<div><label class=\"tip\" data-tip=\"Mutes output when audio falls below this level. Reduces BirdNET-Go CPU during silence. 0 = disabled, 100-500 = typical range.\">Noise Gate &nbsp;<span class=\"val\" id=\"ngv\">%d</span></label>"
     "<input type=\"range\" name=\"noise_gate\" min=\"0\" max=\"2000\" value=\"%d\""
     " oninput=\"ngv.textContent=this.value\"></div>"
-    "</div></div>"
+    "</div>"
+    "<div class=\"row\">"
+    "<div><label class=\"tip\" data-tip=\"How steeply frequencies below the cutoff roll off. 6 dB/octave is gentle; 24 dB/octave is close to a brick wall - best for killing wind rumble.\">HPF Slope</label>"
+    "<select name=\"hpf_slope\" id=\"slopeSel\" onchange=\"drawHpf()\">"
+    "<option value=\"1\"%s>6 dB/octave</option>"
+    "<option value=\"2\"%s>12 dB/octave</option>"
+    "<option value=\"3\"%s>18 dB/octave</option>"
+    "<option value=\"4\"%s>24 dB/octave</option>"
+    "</select></div>"
+    "<div><label class=\"tip\" data-tip=\"Maximum attenuation of the filter. Full removes lows entirely; smaller values only push them down by that many dB, keeping some low-end ambience. 0 dB bypasses the filter.\">HPF Depth &nbsp;<span class=\"val\" id=\"hdv\">%d</span></label>"
+    "<input type=\"range\" name=\"hpf_depth\" id=\"depthIn\" min=\"0\" max=\"60\" step=\"3\" value=\"%d\""
+    " oninput=\"hdv.textContent=this.value>=60?'Full':this.value+' dB';drawHpf()\"></div>"
+    "</div>"
+    "</div>"
+    "<label style=\"margin-top:2px\">Filter Response</label>"
+    "<canvas id=\"hg\" width=\"600\" height=\"220\""
+    " style=\"width:100%%;height:220px;border-radius:4px;background:#111827\"></canvas>"
     "<div class=\"card\"><h2>LED</h2>"
     "<label class=\"tip\" data-tip=\"Status LED brightness. 0 = off, 255 = maximum. Values of 20-50 work well indoors. Blue = connecting, solid green = connected, blinking green = streaming, orange = WiFi failed, red = setup mode.\">Brightness &nbsp;<span class=\"val\" id=\"bv\">%d</span></label>"
     "<input type=\"range\" name=\"led_brightness\" min=\"0\" max=\"255\" value=\"%d\""
@@ -190,6 +206,52 @@ static const char *s_html =
     "}"
     "setInterval(stPoll,2000);stPoll();"
     "var $=function(i){return document.getElementById(i);};"
+    // Frequency response of the exact filter the firmware runs: N cascaded
+    // 1st-order HPF stages H(z)=a(1-1/z)/(1-a/z) shelf-blended with the dry
+    // signal: Ht = k + (1-k)*H^N, plotted in dB on a log frequency axis.
+    "window.drawHpf=function(){"
+    "var c=$('hg');if(!c)return;var g=c.getContext('2d');"
+    // match the backing store to the on-screen CSS size × devicePixelRatio,
+    // otherwise the fixed 600px bitmap gets stretched to the card width and
+    // smears the axis text
+    "var pr=window.devicePixelRatio||1,rc=c.getBoundingClientRect();"
+    "var bw=Math.round(rc.width*pr),bh=Math.round(rc.height*pr);"
+    "if(bw>0&&(c.width!=bw||c.height!=bh)){c.width=bw;c.height=bh;}"
+    "var W=c.width,H=c.height;"
+    "var fc=parseInt($('hpfIn').value),N=parseInt($('slopeSel').value),"
+    "dp=parseInt($('depthIn').value),fs=parseInt($('srSel').value);"
+    "g.fillStyle='#111827';g.fillRect(0,0,W,H);"
+    "var fmin=20,fmax=fs/2,dbMin=-66,dbMax=6;"
+    "function fx(f){return W*Math.log(f/fmin)/Math.log(fmax/fmin);}"
+    "function fy(db){return H*(dbMax-db)/(dbMax-dbMin);}"
+    "g.strokeStyle='#1f2937';g.fillStyle='#4b5563';"
+    "g.font=(10*pr)+'px monospace';g.lineWidth=pr;"
+    "[-60,-40,-20,0].forEach(function(db){var y=fy(db);"
+    "g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();g.fillText(db+' dB',4*pr,y-3*pr);});"
+    "[100,1000,10000].forEach(function(f){if(f<fmax){var px=fx(f);"
+    "g.beginPath();g.moveTo(px,0);g.lineTo(px,H);g.stroke();"
+    "g.fillText(f>=1000?(f/1000)+'k':''+f,px+3*pr,H-4*pr);}});"
+    "if(fc>0){g.strokeStyle='#f59e0b';g.setLineDash([3*pr,3*pr]);"
+    "var cx=fx(Math.max(fc,fmin));g.beginPath();g.moveTo(cx,0);g.lineTo(cx,H);g.stroke();g.setLineDash([]);}"
+    "var a=fc>0?Math.max(0,1-2*Math.PI*fc/fs):0,k=dp>=60?0:Math.pow(10,-dp/20);"
+    "g.strokeStyle='#60a5fa';g.lineWidth=2*pr;g.beginPath();"
+    "for(var p=0;p<=W;p+=2){"
+    "var f=fmin*Math.pow(fmax/fmin,p/W),db=0;"
+    "if(a>0){"
+    "var w=2*Math.PI*f/fs,cw=Math.cos(w),sw=Math.sin(w);"
+    "var nr=a*(1-cw),ni=a*sw,dr=1-a*cw,di=a*sw;"
+    "var dd=dr*dr+di*di,hr=(nr*dr+ni*di)/dd,hi=(ni*dr-nr*di)/dd;"
+    "var rr=1,ri=0;"
+    "for(var q=0;q<N;q++){var t=rr*hr-ri*hi;ri=rr*hi+ri*hr;rr=t;}"
+    "rr=k+(1-k)*rr;ri=(1-k)*ri;"
+    "db=20*Math.log(Math.sqrt(rr*rr+ri*ri)+1e-9)/Math.LN10;"
+    "}"
+    "if(db>dbMax)db=dbMax;if(db<dbMin)db=dbMin;"
+    "var py=fy(db);"
+    "p===0?g.moveTo(0,py):g.lineTo(p,py);"
+    "}"
+    "g.stroke();"
+    "};"
     "var lsnCtx=null,lsnAbort=null,lsnEl=null;"
     "function lsnStop(){"
     "if(lsnAbort){try{lsnAbort.abort();}catch(e){}lsnAbort=null;}"
@@ -312,6 +374,10 @@ static const char *s_html =
     "document.getElementById('gsWrap').classList.toggle('dim',usb);"
     "};"
     "toggleGainShift();"
+    "var dv=$('depthIn').value;"
+    "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
+    "drawHpf();"
+    "window.addEventListener('resize',drawHpf);"
     "})();"
     "</script>"
     "</body></html>";
@@ -409,7 +475,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *app = esp_app_get_description();
 
-    const size_t bufsz = 16384;
+    const size_t bufsz = 20480;
     char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
@@ -430,6 +496,11 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         (int)g_config.gain_mult,   (int)g_config.gain_mult,
         (int)g_config.hpf_freq, (int)g_config.hpf_freq,
         (int)g_config.noise_gate, (int)g_config.noise_gate,
+        g_config.hpf_slope == 1 ? " selected" : "",
+        g_config.hpf_slope == 2 ? " selected" : "",
+        g_config.hpf_slope == 3 ? " selected" : "",
+        g_config.hpf_slope == 4 ? " selected" : "",
+        (int)g_config.hpf_depth, (int)g_config.hpf_depth,
         (int)g_config.led_brightness, (int)g_config.led_brightness,
         app->version, ota_board_variant(), app->date);
 
@@ -458,7 +529,7 @@ static void reboot_task(void *arg)
 static esp_err_t save_post_handler(httpd_req_t *req)
 {
     int body_len = req->content_len;
-    if (body_len <= 0 || body_len > 511) body_len = 511;
+    if (body_len <= 0 || body_len > 1023) body_len = 1023;
 
     char *body = malloc(body_len + 1);
     if (!body) return ESP_ERR_NO_MEM;
@@ -537,6 +608,18 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     if (val[0]) {
         int v = atoi(val);
         if (v >= 0 && v <= 1000) g_config.hpf_freq = (uint16_t)v;
+    }
+
+    get_field(body, "hpf_slope", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= 1 && v <= 4) g_config.hpf_slope = (uint8_t)v;
+    }
+
+    get_field(body, "hpf_depth", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= 0 && v <= 60) g_config.hpf_depth = (uint8_t)v;
     }
 
     get_field(body, "noise_gate", val, sizeof(val));

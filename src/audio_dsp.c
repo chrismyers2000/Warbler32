@@ -1,6 +1,8 @@
 #include "audio_dsp.h"
 #include "app_config.h"
 
+#include <math.h>
+
 void audio_dsp_init(audio_dsp_state_t *st)
 {
     // α = 1 − 2π×fc/fs  (1st-order IIR, valid for fc << fs)
@@ -11,29 +13,54 @@ void audio_dsp_init(audio_dsp_state_t *st)
     } else {
         st->hpf_alpha = 0.0f;
     }
-    st->hpf_in  = 0.0f;
-    st->hpf_out = 0.0f;
-    st->hpf_freq_applied = g_config.hpf_freq;
+
+    st->stages = g_config.hpf_slope;
+    if (st->stages < 1) st->stages = 1;
+    if (st->stages > AUDIO_HPF_MAX_STAGES) st->stages = AUDIO_HPF_MAX_STAGES;
+
+    // Shelf depth: mix `shelf_k` of the dry signal back in, so lows are
+    // pushed down by `hpf_depth` dB instead of removed outright. 60 dB is
+    // treated as a full cut.
+    st->shelf_k = (g_config.hpf_depth >= 60)
+                      ? 0.0f
+                      : powf(10.0f, -(float)g_config.hpf_depth / 20.0f);
+
+    for (int i = 0; i < AUDIO_HPF_MAX_STAGES; i++) {
+        st->in[i]  = 0.0f;
+        st->out[i] = 0.0f;
+    }
+
+    st->hpf_freq_applied  = g_config.hpf_freq;
+    st->hpf_slope_applied = g_config.hpf_slope;
+    st->hpf_depth_applied = g_config.hpf_depth;
 }
 
 void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
 {
-    // hpf_freq is web-configurable without a reboot; re-derive alpha when it
-    // changes (gain_mult/noise_gate below read g_config directly, so they
-    // need no equivalent).
-    if (st->hpf_freq_applied != g_config.hpf_freq)
+    // All HPF parameters are web-configurable without a reboot; re-derive
+    // coefficients when any of them change (gain_mult/noise_gate below read
+    // g_config directly, so they need no equivalent).
+    if (st->hpf_freq_applied  != g_config.hpf_freq  ||
+        st->hpf_slope_applied != g_config.hpf_slope ||
+        st->hpf_depth_applied != g_config.hpf_depth)
         audio_dsp_init(st);
 
     for (size_t i = 0; i < count; i++) {
         int32_t s = (int32_t)buf[i] * g_config.gain_mult;
 
-        // High-pass filter: y[n] = α*(y[n-1] + x[n] - x[n-1])
+        // High-pass: cascaded 1st-order stages (6 dB/oct each), each
+        // y[n] = α*(y[n-1] + x[n] - x[n-1]), then shelf-blend the dry
+        // signal back in for a partial (attenuating) cut.
         if (st->hpf_alpha > 0.0f) {
-            float in  = (float)s;
-            float out = st->hpf_alpha * (st->hpf_out + in - st->hpf_in);
-            st->hpf_in  = in;
-            st->hpf_out = out;
-            s = (int32_t)out;
+            float x = (float)s;
+            float y = x;
+            for (int stage = 0; stage < st->stages; stage++) {
+                float out = st->hpf_alpha * (st->out[stage] + y - st->in[stage]);
+                st->in[stage]  = y;
+                st->out[stage] = out;
+                y = out;
+            }
+            s = (int32_t)(y + st->shelf_k * (x - y));
         }
 
         if (s >  32767) s =  32767;

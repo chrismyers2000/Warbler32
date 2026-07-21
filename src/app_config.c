@@ -21,6 +21,8 @@ esp_err_t app_config_load(void)
     g_config.gain_mult      = AUDIO_GAIN_MULT;
     g_config.led_brightness = NEOPIXEL_BRIGHTNESS;
     g_config.hpf_freq       = AUDIO_HPF_FREQ;
+    g_config.hpf_slope      = AUDIO_HPF_SLOPE;
+    g_config.hpf_depth      = AUDIO_HPF_DEPTH;
     g_config.noise_gate     = AUDIO_NOISE_GATE;
     g_config.audio_source   = AUDIO_SOURCE_DEFAULT;
 
@@ -45,6 +47,8 @@ esp_err_t app_config_load(void)
     nvs_get_u8 (h, "gain_mult",   &g_config.gain_mult);
     nvs_get_u8 (h, "led_bright",  &g_config.led_brightness);
     nvs_get_u16(h, "hpf_freq",    &g_config.hpf_freq);
+    nvs_get_u8 (h, "hpf_slope",   &g_config.hpf_slope);
+    nvs_get_u8 (h, "hpf_depth",   &g_config.hpf_depth);
     nvs_get_u16(h, "noise_gate",  &g_config.noise_gate);
     nvs_get_u8 (h, "audio_src",   &g_config.audio_source);
 
@@ -70,6 +74,8 @@ esp_err_t app_config_save(void)
     nvs_set_u8 (h, "gain_mult",   g_config.gain_mult);
     nvs_set_u8 (h, "led_bright",  g_config.led_brightness);
     nvs_set_u16(h, "hpf_freq",    g_config.hpf_freq);
+    nvs_set_u8 (h, "hpf_slope",   g_config.hpf_slope);
+    nvs_set_u8 (h, "hpf_depth",   g_config.hpf_depth);
     nvs_set_u16(h, "noise_gate",  g_config.noise_gate);
     nvs_set_u8 (h, "audio_src",   g_config.audio_source);
     nvs_commit(h);

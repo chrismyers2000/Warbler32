@@ -16,6 +16,8 @@ typedef struct {
     uint8_t  gain_mult;
     uint8_t  led_brightness;
     uint16_t hpf_freq;
+    uint8_t  hpf_slope;      // 1-4 cascaded stages (6/12/18/24 dB per octave)
+    uint8_t  hpf_depth;      // shelf attenuation in dB; 60 = full cut, 0 = bypass
     uint16_t noise_gate;
     uint8_t  audio_source;   // AUDIO_SOURCE_I2S or AUDIO_SOURCE_USB
 } app_config_t;

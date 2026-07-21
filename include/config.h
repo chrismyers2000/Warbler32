@@ -76,6 +76,13 @@
 // 80-200 Hz recommended outdoors; higher values cut more low-frequency noise
 #define AUDIO_HPF_FREQ    0
 
+// HPF slope: number of cascaded 1st-order stages (1-4 = 6/12/18/24 dB per octave)
+#define AUDIO_HPF_SLOPE   1
+// HPF attenuation depth in dB (low-shelf): how far lows below the cutoff are
+// pushed down. 60 = effectively a full cut (matches the pre-shelf behavior);
+// 0 = filter bypassed.
+#define AUDIO_HPF_DEPTH   60
+
 // Noise gate: silence output when peak is below this threshold (int16 units)
 // 0 = disabled, 50-500 = typical useful range
 #define AUDIO_NOISE_GATE  0
