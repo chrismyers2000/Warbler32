@@ -25,6 +25,11 @@ esp_err_t app_config_load(void)
     g_config.hpf_depth      = AUDIO_HPF_DEPTH;
     g_config.audio_source   = AUDIO_SOURCE_DEFAULT;
     g_config.mic_model      = MIC_MODEL_DEFAULT;
+    g_config.batt_chemistry = BATTERY_DEFAULT_CHEMISTRY;
+    g_config.batt_cells     = BATTERY_DEFAULT_CELLS;
+    g_config.batt_low_mv    = BATTERY_DEFAULT_LOW_MV;
+    g_config.batt_nom_mv    = BATTERY_DEFAULT_NOMINAL_MV;
+    g_config.batt_full_mv   = BATTERY_DEFAULT_FULL_MV;
 
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_NS, NVS_READONLY, &h);
@@ -51,6 +56,11 @@ esp_err_t app_config_load(void)
     nvs_get_u8 (h, "hpf_depth",   &g_config.hpf_depth);
     nvs_get_u8 (h, "audio_src",   &g_config.audio_source);
     nvs_get_u8 (h, "mic_model",   &g_config.mic_model);
+    nvs_get_u8 (h, "batt_chem",   &g_config.batt_chemistry);
+    nvs_get_u8 (h, "batt_cells",  &g_config.batt_cells);
+    nvs_get_u16(h, "batt_low_mv", &g_config.batt_low_mv);
+    nvs_get_u16(h, "batt_nom_mv", &g_config.batt_nom_mv);
+    nvs_get_u16(h, "batt_full_mv",&g_config.batt_full_mv);
 
     nvs_close(h);
 
@@ -78,6 +88,11 @@ esp_err_t app_config_save(void)
     nvs_set_u8 (h, "hpf_depth",   g_config.hpf_depth);
     nvs_set_u8 (h, "audio_src",   g_config.audio_source);
     nvs_set_u8 (h, "mic_model",   g_config.mic_model);
+    nvs_set_u8 (h, "batt_chem",   g_config.batt_chemistry);
+    nvs_set_u8 (h, "batt_cells",  g_config.batt_cells);
+    nvs_set_u16(h, "batt_low_mv", g_config.batt_low_mv);
+    nvs_set_u16(h, "batt_nom_mv", g_config.batt_nom_mv);
+    nvs_set_u16(h, "batt_full_mv",g_config.batt_full_mv);
     nvs_commit(h);
     nvs_close(h);
 

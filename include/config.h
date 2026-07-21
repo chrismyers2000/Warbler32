@@ -160,3 +160,31 @@
 #define TASK_MIC_RETRY_STACK    3072
 #define TASK_MIC_RETRY_PRIORITY 2
 #define TASK_MIC_RETRY_CORE     1
+
+#define TASK_BATTERY_STACK      3072
+#define TASK_BATTERY_PRIORITY   2
+#define TASK_BATTERY_CORE       1
+
+// =============================================================================
+// Battery monitor (INA219 I2C voltage sensor) — optional. If no INA219 is
+// found on the bus, /status just reports it absent; nothing else is
+// affected (no blocking boot, no error spam beyond one log line per
+// present/absent transition).
+// =============================================================================
+#define BATTERY_I2C_PORT        I2C_NUM_0
+#define BATTERY_I2C_SDA_GPIO    8     // free on ESP32-S3-DevKitC-1: not a
+#define BATTERY_I2C_SCL_GPIO    9     // strapping pin, not USB D+/D-, not PSRAM
+#define BATTERY_I2C_FREQ_HZ     100000
+
+#define INA219_I2C_ADDR         0x40  // default addr, all ADR pins unstrapped
+#define INA219_REG_BUS_VOLTAGE  0x02  // 13-bit, 4 mV/LSB — no calibration needed
+
+#define BATTERY_POLL_INTERVAL_MS  10000
+
+// Battery profile defaults (1S Li-ion/LiPo) — user-configurable via the web
+// UI from here on; see app_config.h's batt_* fields.
+#define BATTERY_DEFAULT_CHEMISTRY    0   // 0=Li-ion/LiPo, 1=LiFePO4, 2=Custom
+#define BATTERY_DEFAULT_CELLS        1
+#define BATTERY_DEFAULT_LOW_MV       3300
+#define BATTERY_DEFAULT_NOMINAL_MV   3700
+#define BATTERY_DEFAULT_FULL_MV      4200

@@ -2,6 +2,7 @@
 #include "app_config.h"
 #include "audio_pipeline.h"
 #include "mic_health.h"
+#include "battery_monitor.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
 #include "config.h"
@@ -70,6 +71,7 @@ static const char *s_html =
     "<div><label>Streaming</label><span class=\"val\" id=\"stStr\">&ndash;</span></div>"
     "<div><label>Audio Drops</label><span class=\"val\" id=\"stOvr\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor (see the Battery card below). Shows an em dash if no INA219 is wired up.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
     "</div></div>"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Device</h2>"
@@ -135,10 +137,33 @@ static const char *s_html =
     "<input type=\"range\" name=\"led_brightness\" min=\"0\" max=\"255\" value=\"%d\""
     " oninput=\"bv.textContent=this.value\">"
     "</div>"
+    "<div class=\"card\"><h2>Battery</h2>"
+    "<label class=\"tip\" data-tip=\"Battery chemistry, used to fill in sensible Low/Nominal/Full voltage presets below. Pick Custom to enter your own pack voltages directly. Requires an INA219 sensor wired to SDA/SCL - if none is detected, this card is just informational and has no effect.\">Chemistry</label>"
+    "<select name=\"batt_chemistry\" id=\"battChem\" onchange=\"applyBattPreset()\">"
+    "<option value=\"0\"%s>Li-ion / LiPo</option>"
+    "<option value=\"1\"%s>LiFePO4</option>"
+    "<option value=\"2\"%s>Custom</option>"
+    "</select>"
+    "<div id=\"battCellsWrap\"><label class=\"tip\" data-tip=\"Number of cells in series (1S-4S). Multiplies the per-cell chemistry preset to get pack voltage. Ignored when Chemistry is Custom.\">Cell Count</label>"
+    "<select name=\"batt_cells\" id=\"battCells\" onchange=\"applyBattPreset()\">"
+    "<option value=\"1\"%s>1S</option>"
+    "<option value=\"2\"%s>2S</option>"
+    "<option value=\"3\"%s>3S</option>"
+    "<option value=\"4\"%s>4S</option>"
+    "</select></div>"
+    "<div class=\"row\" style=\"grid-template-columns:1fr 1fr 1fr\">"
+    "<div><label class=\"tip\" data-tip=\"Voltage at or below which the Status card shows a LOW warning.\">Low (V)</label>"
+    "<input type=\"number\" step=\"0.01\" name=\"batt_low_v\" id=\"battLow\" value=\"%.2f\"></div>"
+    "<div><label class=\"tip\" data-tip=\"Informational reference point, not currently used in any calculation.\">Nominal (V)</label>"
+    "<input type=\"number\" step=\"0.01\" name=\"batt_nom_v\" id=\"battNom\" value=\"%.2f\"></div>"
+    "<div><label class=\"tip\" data-tip=\"Voltage treated as 100%% for the Status card's battery percentage estimate.\">Full (V)</label>"
+    "<input type=\"number\" step=\"0.01\" name=\"batt_full_v\" id=\"battFull\" value=\"%.2f\"></div>"
+    "</div>"
+    "</div>"
     "<button type=\"submit\">Save</button>"
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
-    "Audio &amp; LED changes apply instantly; name, WiFi, input source, and "
-    "sample rate changes reboot the device.</p>"
+    "Audio, LED, &amp; Battery changes apply instantly; name, WiFi, input "
+    "source, and sample rate changes reboot the device.</p>"
     "</form>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
     "<canvas id=\"lv\" width=\"600\" height=\"72\""
@@ -210,6 +235,10 @@ static const char *s_html =
     "if(!j.mic_present){sm.textContent='NO MIC';sm.style.color='#f87171';}"
     "else if(j.mic){sm.textContent='OK';sm.style.color='';}"
     "else{sm.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color='#f87171';}"
+    "var sb=document.getElementById('stBatt');"
+    "if(!j.batt_present){sb.textContent='\\u2013';sb.style.color='';}"
+    "else{sb.textContent=(j.batt_mv/1000).toFixed(2)+' V ('+j.batt_pct+'%%)'"
+    "+(j.batt_low?' LOW':'');sb.style.color=j.batt_low?'#f87171':'';}"
     "}).catch(function(){});"
     "}"
     "setInterval(stPoll,2000);stPoll();"
@@ -384,6 +413,25 @@ static const char *s_html =
     "document.getElementById('mmWrap').classList.toggle('dim',usb);"
     "};"
     "toggleGainShift();"
+    // Per-cell [low,nominal,full] volts for each preset chemistry — pack
+    // voltage is this times the selected cell count. Custom skips this
+    // table entirely and leaves the three fields as whatever's saved/typed.
+    "var battTable=[[3.30,3.70,4.20],[2.80,3.20,3.65]];"
+    "function battUI(){"
+    "var custom=$('battChem').value=='2';"
+    "$('battCells').disabled=custom;"
+    "$('battCellsWrap').classList.toggle('dim',custom);"
+    "}"
+    "window.applyBattPreset=function(){"
+    "battUI();"
+    "var chem=+$('battChem').value;"
+    "if(chem==2)return;"
+    "var t=battTable[chem],cells=+$('battCells').value;"
+    "$('battLow').value=(t[0]*cells).toFixed(2);"
+    "$('battNom').value=(t[1]*cells).toFixed(2);"
+    "$('battFull').value=(t[2]*cells).toFixed(2);"
+    "};"
+    "battUI();"
     "var dv=$('depthIn').value;"
     "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
     "drawHpf();"
@@ -485,7 +533,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *app = esp_app_get_description();
 
-    const size_t bufsz = 20480;
+    const size_t bufsz = 24576;
     char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
@@ -513,6 +561,16 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.hpf_slope == 4 ? " selected" : "",
         (int)g_config.hpf_depth, (int)g_config.hpf_depth,
         (int)g_config.led_brightness, (int)g_config.led_brightness,
+        g_config.batt_chemistry == 0 ? " selected" : "",
+        g_config.batt_chemistry == 1 ? " selected" : "",
+        g_config.batt_chemistry == 2 ? " selected" : "",
+        g_config.batt_cells == 1 ? " selected" : "",
+        g_config.batt_cells == 2 ? " selected" : "",
+        g_config.batt_cells == 3 ? " selected" : "",
+        g_config.batt_cells == 4 ? " selected" : "",
+        g_config.batt_low_mv  / 1000.0,
+        g_config.batt_nom_mv  / 1000.0,
+        g_config.batt_full_mv / 1000.0,
         app->version, ota_board_variant(), app->date);
 
     // snprintf returns the would-be length: if the page outgrows the buffer,
@@ -639,6 +697,38 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         int v = atoi(val);
         if (v == MIC_MODEL_INMP441 || v == MIC_MODEL_SPH0645)
             g_config.mic_model = (uint8_t)v;
+    }
+
+    get_field(body, "batt_chemistry", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= 0 && v <= 2) g_config.batt_chemistry = (uint8_t)v;
+    }
+
+    get_field(body, "batt_cells", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= 1 && v <= 4) g_config.batt_cells = (uint8_t)v;
+    }
+
+    // Voltage fields arrive as volts (e.g. "3.30") from the number inputs —
+    // stored internally as mV, same unit battery_monitor_voltage_mv() reads.
+    get_field(body, "batt_low_v", val, sizeof(val));
+    if (val[0]) {
+        double v = atof(val);
+        if (v >= 0 && v <= 60) g_config.batt_low_mv = (uint16_t)(v * 1000 + 0.5);
+    }
+
+    get_field(body, "batt_nom_v", val, sizeof(val));
+    if (val[0]) {
+        double v = atof(val);
+        if (v >= 0 && v <= 60) g_config.batt_nom_mv = (uint16_t)(v * 1000 + 0.5);
+    }
+
+    get_field(body, "batt_full_v", val, sizeof(val));
+    if (val[0]) {
+        double v = atof(val);
+        if (v >= 0 && v <= 60) g_config.batt_full_mv = (uint16_t)(v * 1000 + 0.5);
     }
 
     free(body);
@@ -929,12 +1019,27 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
     }
 
+    // Battery percent is a simple linear estimate between the configured
+    // Low/Full voltages — good enough for a status display, not lab-grade.
+    bool     batt_present = battery_monitor_present();
+    uint16_t batt_mv      = battery_monitor_voltage_mv();
+    int      batt_pct     = 0;
+    if (batt_present && g_config.batt_full_mv > g_config.batt_low_mv) {
+        int span = (int)g_config.batt_full_mv - (int)g_config.batt_low_mv;
+        int rel  = (int)batt_mv - (int)g_config.batt_low_mv;
+        batt_pct = (rel * 100) / span;
+        if (batt_pct < 0)   batt_pct = 0;
+        if (batt_pct > 100) batt_pct = 100;
+    }
+    bool batt_low = batt_present && batt_mv < g_config.batt_low_mv;
+
     char json[384];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
         "\"overruns\":%u,\"peak\":%d,\"preview\":%d,"
         "\"mic\":%d,\"mic_silent\":%u,\"mic_present\":%d,"
+        "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
         "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
@@ -948,6 +1053,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         atomic_load(&s_preview_busy) ? 1 : 0,
         mic_health_ok() ? 1 : 0, (unsigned)mic_health_silent_secs(),
         audio_pipeline_is_active() ? 1 : 0,
+        batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 
     httpd_resp_set_type(req, "application/json");

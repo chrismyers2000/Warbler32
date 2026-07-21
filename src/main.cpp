@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "status_led.h"
+#include "battery_monitor.h"
 #include "boot_button.h"
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -25,6 +26,10 @@ extern "C" void app_main(void)
 
     // Status LED: start before WiFi so we show "connecting" immediately
     ESP_ERROR_CHECK(status_led_init());
+
+    // Battery voltage monitor (INA219, optional — if absent, the Status
+    // card just shows it as not present; never blocks boot)
+    ESP_ERROR_CHECK(battery_monitor_init());
 
     // Background task: BOOT button gestures (hold = factory reset,
     // double-tap in setup mode = cycle WiFi channel)

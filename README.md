@@ -19,6 +19,9 @@ No programming experience is required to use this — just follow the steps belo
   need to figure out which one you have.
 - A USB cable to connect it to your computer
 - Either an **INMP441** or **SPH0645** microphone breakout, or a **UAC-class USB microphone**
+- (Optional) An **INA219** breakout board, if you want battery-voltage
+  monitoring on the Status card — most boards default to I2C address
+  `0x40`, which this firmware expects.
 - A computer running Windows, macOS, or Linux
 
 ## 1. Get the code
@@ -128,6 +131,21 @@ driver used here. It works cleanly on other hosts (e.g. a Raspberry Pi);
 on this board, treat it as untested/may-not-work rather than a supported
 option.
 
+## Wiring (INA219 battery monitor — optional, skip if not using one)
+
+| INA219 pin | ESP32-S3 GPIO |
+|---|---|
+| SDA | 8 |
+| SCL | 9 |
+| VCC | 3.3V |
+| GND | GND |
+
+Wire **VIN+/VIN-** across whatever you want to measure the voltage of —
+typically directly across the battery terminals, before any regulator. The
+INA219 measures up to 26V, plenty for common 1S-4S Li-ion/LiPo or LiFePO4
+packs. If no INA219 is detected on the bus, the Status card just shows "–"
+for Battery and nothing else in the firmware is affected.
+
 ## First-time WiFi setup
 
 The device ships with no WiFi configured. On first boot (and any time it can't
@@ -176,9 +194,10 @@ moment you hit Save — no reboot, no stream interruption. Changing the name,
 WiFi, input source, or sample rate still reboots the device.
 
 A **Status** card at the top shows live diagnostics — uptime, WiFi signal,
-free memory, connected RTSP clients, dropped-audio count, and mic health.
-The same data is available as JSON at `http://<name>.local/status` if you
-want to script your own monitoring.
+free memory, connected RTSP clients, dropped-audio count, mic health, and
+battery voltage (if an INA219 is wired up). The same data is available as
+JSON at `http://<name>.local/status` if you want to script your own
+monitoring.
 
 ### Mic-health detection
 
@@ -191,6 +210,20 @@ a **magenta blink** (instead of green) so you can see it from across the
 yard. A healthy mic's own self-noise keeps the detector happy even in a
 completely quiet room, so there are no false alarms at night. Everything
 recovers automatically the moment real signal returns.
+
+### Battery voltage monitoring
+
+If an INA219 is wired up (see Wiring above), the config page's **Battery**
+card lets you pick a chemistry (Li-ion/LiPo or LiFePO4) and cell count
+(1S-4S) — the Low/Nominal/Full voltage fields auto-fill to sensible
+presets, but stay directly editable if you want to fine-tune them, or pick
+**Custom** to enter your own pack voltages from scratch. The Status card
+shows the live voltage and an estimated percentage (a simple linear
+estimate between Low and Full — not lab-grade, but good enough at a
+glance), turning red with a **LOW** label once voltage drops to or below
+the configured Low threshold. No INA219 wired up? The card just shows "–"
+and nothing else in the firmware is affected. Battery settings apply
+instantly, no reboot needed.
 
 ## Updating the firmware over WiFi
 
