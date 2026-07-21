@@ -44,9 +44,16 @@
 // =============================================================================
 // Audio input source
 // =============================================================================
-#define AUDIO_SOURCE_I2S      0   // INMP441 over I2S
+#define AUDIO_SOURCE_I2S      0   // I2S MEMS mic (see MIC_MODEL_*)
 #define AUDIO_SOURCE_USB      1   // USB Audio Class (UAC 1.0) microphone, USB Host mode
 #define AUDIO_SOURCE_DEFAULT  AUDIO_SOURCE_I2S
+
+// Which I2S mic is wired up. Both use the same pins and wiring (L/R / SEL
+// tied to GND), but the SPH0645 clocks data out one BCLK early relative to
+// the Philips I2S standard, so it needs the MSB (left-justified) slot format.
+#define MIC_MODEL_INMP441     0
+#define MIC_MODEL_SPH0645     1
+#define MIC_MODEL_DEFAULT     MIC_MODEL_INMP441
 
 // =============================================================================
 // Audio parameters
@@ -83,9 +90,16 @@
 // 0 = filter bypassed.
 #define AUDIO_HPF_DEPTH   60
 
-// Noise gate: silence output when peak is below this threshold (int16 units)
-// 0 = disabled, 50-500 = typical useful range
-#define AUDIO_NOISE_GATE  0
+// Mic-health detector: the mic is declared silent (web status + magenta LED)
+// when the raw pre-DSP signal shows less than MIN_P2P peak-to-peak movement
+// for TIMEOUT_MS. A healthy INMP441's self-noise alone exceeds 4 counts, so
+// even a dead-quiet room never trips this — only a true flatline does.
+#define MIC_HEALTH_MIN_P2P     4
+#define MIC_HEALTH_TIMEOUT_MS  20000
+
+// GitHub OTA download: retry transient network failures (mesh WiFi hiccups)
+#define OTA_GH_ATTEMPTS        3
+#define OTA_GH_RETRY_DELAY_MS  3000
 
 // =============================================================================
 // RTSP / RTP

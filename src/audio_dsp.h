@@ -26,8 +26,8 @@ typedef struct {
 // and sample_rate) and reset filter state.
 void audio_dsp_init(audio_dsp_state_t *st);
 
-// Apply gain_mult, high-pass filter (cascaded shelf), clamping, and noise
-// gate in place. Input samples must already be scaled to roughly int16 range
+// Apply gain_mult, high-pass filter (cascaded shelf), and clamping in
+// place. Input samples must already be scaled to roughly int16 range
 // (e.g. after any source-specific bit-depth extraction such as the I2S
 // 32-bit frame shift).
 void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count);

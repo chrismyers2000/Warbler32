@@ -226,7 +226,19 @@ esp_err_t ota_github_check(ota_check_result_t *out, const char **err_msg)
     char *body = NULL;
     esp_err_t ret = ESP_FAIL;
 
-    esp_err_t err = esp_http_client_open(client, 0);
+    // The mesh WiFi occasionally drops the first TLS connect; those failures
+    // are quick, so a couple of retries are cheap even in the httpd task.
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < OTA_GH_ATTEMPTS; attempt++) {
+        if (attempt > 0) {
+            ESP_LOGW(TAG, "GitHub connect failed, retrying (%d/%d)",
+                     attempt + 1, OTA_GH_ATTEMPTS);
+            esp_http_client_close(client);
+            vTaskDelay(pdMS_TO_TICKS(500));
+        }
+        err = esp_http_client_open(client, 0);
+        if (err == ESP_OK) break;
+    }
     if (err != ESP_OK) {
         *err_msg = "Could not reach GitHub (no internet?)";
         goto out;
@@ -330,7 +342,10 @@ static void gh_fail(const char *msg)
     s_prog.state = "error";
 }
 
-static void gh_install_task(void *arg)
+// One complete download + flash attempt. Returns ESP_OK on success,
+// ESP_ERR_INVALID_STATE for permanent failures (bad image, engine busy),
+// and ESP_FAIL for transient network failures worth retrying.
+static esp_err_t gh_attempt(uint8_t *buf, const char **emsg)
 {
     esp_http_client_config_t cfg = {
         .url               = s_asset_url,
@@ -345,21 +360,20 @@ static void gh_install_task(void *arg)
         .buffer_size_tx    = 4096,
     };
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    uint8_t *buf = malloc(4096);
-    const char *emsg = "Download failed";
-    bool engine_active = false;
-
-    if (client == NULL || buf == NULL) {
-        gh_fail("Out of memory");
-        goto out;
+    if (client == NULL) {
+        *emsg = "Out of memory";
+        return ESP_ERR_INVALID_STATE;
     }
+
+    esp_err_t ret = ESP_FAIL;        // default: transient, retry
+    bool engine_active = false;
 
     // browser_download_url redirects to GitHub's CDN; follow manually since
     // the streaming open/fetch_headers path doesn't auto-redirect.
     int status = 0;
     for (int hop = 0; hop < 5; hop++) {
         if (esp_http_client_open(client, 0) != ESP_OK) {
-            gh_fail("Could not reach GitHub (no internet?)");
+            *emsg = "Could not reach GitHub (no internet?)";
             goto out;
         }
         esp_http_client_fetch_headers(client);
@@ -374,15 +388,15 @@ static void gh_install_task(void *arg)
     }
     if (status != 200) {
         ESP_LOGE(TAG, "asset download HTTP %d", status);
-        gh_fail("Download failed (GitHub error)");
+        *emsg = "Download failed (GitHub error)";
         goto out;
     }
 
     int64_t clen = esp_http_client_get_content_length(client);
     size_t total = (clen > 0) ? (size_t)clen : s_asset_size;
 
-    if (ota_engine_begin(total, &emsg) != ESP_OK) {
-        gh_fail(emsg);
+    if (ota_engine_begin(total, emsg) != ESP_OK) {
+        ret = ESP_ERR_INVALID_STATE;
         goto out;
     }
     engine_active = true;
@@ -391,38 +405,68 @@ static void gh_install_task(void *arg)
     size_t received = 0;
     int n;
     while ((n = esp_http_client_read(client, (char *)buf, 4096)) > 0) {
-        if (ota_engine_feed(buf, (size_t)n, &emsg) != ESP_OK) {
+        if (ota_engine_feed(buf, (size_t)n, emsg) != ESP_OK) {
             engine_active = false;   // feed aborts the engine on error
-            gh_fail(emsg);
+            ret = ESP_ERR_INVALID_STATE;
             goto out;
         }
         received += (size_t)n;
         s_prog.pct = (int)(received * 100 / total);
     }
     if (n < 0 || !esp_http_client_is_complete_data_received(client)) {
-        gh_fail("Download interrupted");
+        *emsg = "Download interrupted";
         goto out;
     }
 
     s_prog.state = "verifying";
     engine_active = false;           // finish consumes the engine either way
-    if (ota_engine_finish(&emsg) != ESP_OK) {
-        gh_fail(emsg);
+    if (ota_engine_finish(emsg) != ESP_OK) {
+        ret = ESP_ERR_INVALID_STATE;
         goto out;
+    }
+    ret = ESP_OK;
+
+out:
+    if (engine_active) ota_engine_abort();
+    esp_http_client_cleanup(client);
+    return ret;
+}
+
+static void gh_install_task(void *arg)
+{
+    uint8_t *buf = malloc(4096);
+    const char *emsg = "Download failed";
+
+    if (buf == NULL) {
+        gh_fail("Out of memory");
+        vTaskDelete(NULL);
+        return;
+    }
+
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 1; attempt <= OTA_GH_ATTEMPTS; attempt++) {
+        if (attempt > 1) {
+            ESP_LOGW(TAG, "download failed (%s), retrying (%d/%d)",
+                     emsg, attempt, OTA_GH_ATTEMPTS);
+            s_prog.state = "downloading";
+            s_prog.pct   = 0;
+            vTaskDelay(pdMS_TO_TICKS(OTA_GH_RETRY_DELAY_MS));
+        }
+        err = gh_attempt(buf, &emsg);
+        if (err != ESP_FAIL) break;  // success or permanent failure
+    }
+    free(buf);
+
+    if (err != ESP_OK) {
+        gh_fail(emsg);
+        vTaskDelete(NULL);
+        return;
     }
 
     s_prog.state = "rebooting";
     ESP_LOGI(TAG, "update installed, rebooting");
-    esp_http_client_cleanup(client);
-    free(buf);
     vTaskDelay(pdMS_TO_TICKS(750));
     esp_restart();
-
-out:
-    if (engine_active) ota_engine_abort();
-    if (client) esp_http_client_cleanup(client);
-    free(buf);
-    vTaskDelete(NULL);
 }
 
 esp_err_t ota_github_install(const char **err_msg)

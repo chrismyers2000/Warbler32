@@ -1,5 +1,6 @@
 #include "audio_dsp.h"
 #include "app_config.h"
+#include "mic_health.h"
 
 #include <math.h>
 
@@ -37,9 +38,13 @@ void audio_dsp_init(audio_dsp_state_t *st)
 
 void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
 {
+    // Dead-mic detection must see the raw signal, before gain and filtering
+    // can flatten or reshape it.
+    mic_health_report(buf, count);
+
     // All HPF parameters are web-configurable without a reboot; re-derive
-    // coefficients when any of them change (gain_mult/noise_gate below read
-    // g_config directly, so they need no equivalent).
+    // coefficients when any of them change (gain_mult below reads g_config
+    // directly, so it needs no equivalent).
     if (st->hpf_freq_applied  != g_config.hpf_freq  ||
         st->hpf_slope_applied != g_config.hpf_slope ||
         st->hpf_depth_applied != g_config.hpf_depth)
@@ -65,16 +70,6 @@ void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
 
         if (s >  32767) s =  32767;
         if (s < -32768) s = -32768;
-
-        // Noise gate: mute samples below threshold. Compute the absolute
-        // value in int32_t (s's own type) before comparing — narrowing to
-        // int16_t first overflows when s is exactly -32768 (a full-scale
-        // clipped sample), wrapping the result negative and causing the
-        // gate to fire on every clipped sample regardless of threshold.
-        if (g_config.noise_gate > 0) {
-            int32_t a = s < 0 ? -s : s;
-            if (a < (int32_t)g_config.noise_gate) s = 0;
-        }
 
         buf[i] = (int16_t)s;
     }

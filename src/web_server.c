@@ -1,6 +1,7 @@
 #include "web_server.h"
 #include "app_config.h"
 #include "audio_pipeline.h"
+#include "mic_health.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
 #include "config.h"
@@ -68,6 +69,7 @@ static const char *s_html =
     "<div><label>RTSP Clients</label><span class=\"val\" id=\"stCli\">&ndash;</span></div>"
     "<div><label>Streaming</label><span class=\"val\" id=\"stStr\">&ndash;</span></div>"
     "<div><label>Audio Drops</label><span class=\"val\" id=\"stOvr\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
     "</div></div>"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Device</h2>"
@@ -81,11 +83,16 @@ static const char *s_html =
     "<input name=\"password\" type=\"password\" value=\"%s\" autocomplete=\"new-password\">"
     "</div>"
     "<div class=\"card\"><h2>Audio</h2>"
-    "<label class=\"tip\" data-tip=\"Which microphone to capture from. INMP441 is the wired I2S mic. USB Microphone requires a UAC-class mic plugged into the native USB port, detected at boot.\">Input Source</label>"
+    "<label class=\"tip\" data-tip=\"Which microphone to capture from. I2S is a wired MEMS mic (pick the model below). USB Microphone requires a UAC-class mic plugged into the native USB port, detected at boot.\">Input Source</label>"
     "<select name=\"audio_source\" id=\"asrc\" onchange=\"toggleGainShift()\">"
-    "<option value=\"0\"%s>INMP441 (I2S)</option>"
+    "<option value=\"0\"%s>I2S Microphone</option>"
     "<option value=\"1\"%s>USB Microphone</option>"
     "</select>"
+    "<div id=\"mmWrap\"><label class=\"tip\" data-tip=\"Which I2S MEMS mic is wired up. Both use the same pins (L/R or SEL tied to GND), but they need different bus timing. Pick the wrong one and you get silence or heavy distortion. The SPH0645 has a DC offset - enable the high-pass filter to remove it.\">I2S Mic Model</label>"
+    "<select name=\"mic_model\" id=\"mmSel\">"
+    "<option value=\"0\"%s>INMP441</option>"
+    "<option value=\"1\"%s>SPH0645</option>"
+    "</select></div>"
     "<label class=\"tip\" data-tip=\"Audio capture frequency. Higher = better quality but more CPU load. 16 kHz is enough for BirdNET-Go; 48 kHz is full studio quality.\">Sample Rate</label>"
     "<select name=\"sample_rate\" id=\"srSel\" onchange=\"drawHpf()\">"
     "<option value=\"8000\"%s>8 kHz</option>"
@@ -96,7 +103,7 @@ static const char *s_html =
     "<option value=\"48000\"%s>48 kHz</option>"
     "</select>"
     "<div class=\"row\">"
-    "<div id=\"gsWrap\"><label class=\"tip\" data-tip=\"Right-shifts the 32-bit mic sample to fit 16 bits. Lower = louder. 12 = +12 dB above unity. Raise this if the audio clips or distorts. Only applies to the INMP441 (I2S) - no effect on a USB microphone.\">Gain Shift &nbsp;<span class=\"val\" id=\"sv\">%d</span></label>"
+    "<div id=\"gsWrap\"><label class=\"tip\" data-tip=\"Right-shifts the 32-bit mic sample to fit 16 bits. Lower = louder. 12 = +12 dB above unity. Raise this if the audio clips or distorts. Only applies to the I2S mic - no effect on a USB microphone.\">Gain Shift &nbsp;<span class=\"val\" id=\"sv\">%d</span></label>"
     "<input type=\"range\" name=\"gain_shift\" id=\"gsIn\" min=\"8\" max=\"20\" value=\"%d\""
     " oninput=\"sv.textContent=this.value\"></div>"
     "<div><label class=\"tip\" data-tip=\"Digital gain multiplier. 1 = no extra gain, 8 = +18 dB, 32 = +30 dB. High settings also amplify hiss/noise, not just the signal - for a USB mic, try the hardware volume boost first. Reduce if audio clips.\">Gain Mult &nbsp;<span class=\"val\" id=\"mv\">%d</span></label>"
@@ -106,9 +113,6 @@ static const char *s_html =
     "<div><label class=\"tip\" data-tip=\"High-pass filter cutoff. 0 = off. Removes DC offset and low-frequency rumble below this frequency. Try 80-200 Hz outdoors to cut wind noise.\">HPF Cutoff &nbsp;<span class=\"val\" id=\"hpfv\">%d</span> Hz</label>"
     "<input type=\"range\" name=\"hpf_freq\" id=\"hpfIn\" min=\"0\" max=\"1000\" step=\"10\" value=\"%d\""
     " oninput=\"hpfv.textContent=this.value==0?'Off':this.value;drawHpf()\"></div>"
-    "<div><label class=\"tip\" data-tip=\"Mutes output when audio falls below this level. Reduces BirdNET-Go CPU during silence. 0 = disabled, 100-500 = typical range.\">Noise Gate &nbsp;<span class=\"val\" id=\"ngv\">%d</span></label>"
-    "<input type=\"range\" name=\"noise_gate\" min=\"0\" max=\"2000\" value=\"%d\""
-    " oninput=\"ngv.textContent=this.value\"></div>"
     "</div>"
     "<div class=\"row\">"
     "<div><label class=\"tip\" data-tip=\"How steeply frequencies below the cutoff roll off. 6 dB/octave is gentle; 24 dB/octave is close to a brick wall - best for killing wind rumble.\">HPF Slope</label>"
@@ -202,6 +206,9 @@ static const char *s_html =
     "document.getElementById('stCli').textContent=j.clients+' / '+j.max_clients;"
     "document.getElementById('stStr').textContent=j.streaming?j.streaming+' active':'no';"
     "document.getElementById('stOvr').textContent=j.overruns;"
+    "var sm=document.getElementById('stMic');"
+    "if(j.mic){sm.textContent='OK';sm.style.color='';}"
+    "else{sm.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color='#f87171';}"
     "}).catch(function(){});"
     "}"
     "setInterval(stPoll,2000);stPoll();"
@@ -372,6 +379,8 @@ static const char *s_html =
     "var usb=document.getElementById('asrc').value=='1';"
     "document.getElementById('gsIn').disabled=usb;"
     "document.getElementById('gsWrap').classList.toggle('dim',usb);"
+    "document.getElementById('mmSel').disabled=usb;"
+    "document.getElementById('mmWrap').classList.toggle('dim',usb);"
     "};"
     "toggleGainShift();"
     "var dv=$('depthIn').value;"
@@ -486,6 +495,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         pass_esc,
         g_config.audio_source == AUDIO_SOURCE_I2S ? " selected" : "",
         g_config.audio_source == AUDIO_SOURCE_USB ? " selected" : "",
+        g_config.mic_model == MIC_MODEL_INMP441 ? " selected" : "",
+        g_config.mic_model == MIC_MODEL_SPH0645 ? " selected" : "",
         g_config.sample_rate ==  8000 ? " selected" : "",
         g_config.sample_rate == 16000 ? " selected" : "",
         g_config.sample_rate == 22050 ? " selected" : "",
@@ -495,7 +506,6 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         (int)g_config.gain_shift,  (int)g_config.gain_shift,
         (int)g_config.gain_mult,   (int)g_config.gain_mult,
         (int)g_config.hpf_freq, (int)g_config.hpf_freq,
-        (int)g_config.noise_gate, (int)g_config.noise_gate,
         g_config.hpf_slope == 1 ? " selected" : "",
         g_config.hpf_slope == 2 ? " selected" : "",
         g_config.hpf_slope == 3 ? " selected" : "",
@@ -540,12 +550,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     // Snapshot the fields that require a reboot to take effect (mDNS/WiFi
     // re-init, mic driver + I2S clock re-init). Everything else — gains,
-    // HPF, noise gate, LED brightness — is read from g_config live by the
-    // audio/LED code and applies the moment the struct is updated.
+    // HPF, LED brightness — is read from g_config live by the audio/LED
+    // code and applies the moment the struct is updated.
     char     old_name[sizeof(g_config.device_name)];
     char     old_ssid[sizeof(g_config.wifi_ssid)];
     char     old_pass[sizeof(g_config.wifi_password)];
     uint8_t  old_source = g_config.audio_source;
+    uint8_t  old_model  = g_config.mic_model;
     uint32_t old_rate   = g_config.sample_rate;
     strlcpy(old_name, g_config.device_name,   sizeof(old_name));
     strlcpy(old_ssid, g_config.wifi_ssid,     sizeof(old_ssid));
@@ -622,10 +633,11 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         if (v >= 0 && v <= 60) g_config.hpf_depth = (uint8_t)v;
     }
 
-    get_field(body, "noise_gate", val, sizeof(val));
+    get_field(body, "mic_model", val, sizeof(val));
     if (val[0]) {
         int v = atoi(val);
-        if (v >= 0 && v <= 2000) g_config.noise_gate = (uint16_t)v;
+        if (v == MIC_MODEL_INMP441 || v == MIC_MODEL_SPH0645)
+            g_config.mic_model = (uint8_t)v;
     }
 
     free(body);
@@ -636,6 +648,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         strcmp(old_ssid, g_config.wifi_ssid)     != 0 ||
         strcmp(old_pass, g_config.wifi_password) != 0 ||
         old_source != g_config.audio_source ||
+        old_model  != g_config.mic_model    ||
         old_rate   != g_config.sample_rate;
 
     httpd_resp_set_type(req, "text/html");
@@ -915,11 +928,12 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
     }
 
-    char json[320];
+    char json[384];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
-        "\"overruns\":%u,\"peak\":%d,\"preview\":%d,\"version\":\"%s\",\"variant\":\"%s\"}",
+        "\"overruns\":%u,\"peak\":%d,\"preview\":%d,"
+        "\"mic\":%d,\"mic_silent\":%u,\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size(),
@@ -930,6 +944,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         (unsigned)audio_pipeline_get_overruns(),
         audio_pipeline_get_peak_pct(),
         atomic_load(&s_preview_busy) ? 1 : 0,
+        mic_health_ok() ? 1 : 0, (unsigned)mic_health_silent_secs(),
         esp_app_get_description()->version, ota_board_variant());
 
     httpd_resp_set_type(req, "application/json");

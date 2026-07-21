@@ -18,8 +18,8 @@ typedef struct {
     uint16_t hpf_freq;
     uint8_t  hpf_slope;      // 1-4 cascaded stages (6/12/18/24 dB per octave)
     uint8_t  hpf_depth;      // shelf attenuation in dB; 60 = full cut, 0 = bypass
-    uint16_t noise_gate;
     uint8_t  audio_source;   // AUDIO_SOURCE_I2S or AUDIO_SOURCE_USB
+    uint8_t  mic_model;      // MIC_MODEL_INMP441 or MIC_MODEL_SPH0645
 } app_config_t;
 
 extern app_config_t g_config;

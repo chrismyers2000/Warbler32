@@ -26,11 +26,19 @@ esp_err_t i2s_mic_init(void)
         return ret;
     }
 
-    // Standard I2S mode — INMP441 uses Philips/I2S standard
+    // INMP441 follows the Philips I2S standard (data delayed one BCLK after
+    // the WS edge). The SPH0645 has a timing quirk — it clocks data out one
+    // BCLK early — which lines up with the MSB (left-justified) slot format
+    // instead. Same pins, same wiring (L/R / SEL to GND) for both.
+    bool sph = g_config.mic_model == MIC_MODEL_SPH0645;
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(g_config.sample_rate),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
-                                                        I2S_SLOT_MODE_MONO),
+        .slot_cfg = sph ? (i2s_std_slot_config_t)
+                          I2S_STD_MSB_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
+                                                          I2S_SLOT_MODE_MONO)
+                        : (i2s_std_slot_config_t)
+                          I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT,
+                                                              I2S_SLOT_MODE_MONO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = I2S_PIN_SCK,
@@ -59,7 +67,8 @@ esp_err_t i2s_mic_init(void)
 
     audio_dsp_init(&s_dsp);
 
-    ESP_LOGI(TAG, "INMP441 ready — %lu Hz mono, WS=%d SCK=%d SD=%d",
+    ESP_LOGI(TAG, "%s ready — %lu Hz mono, WS=%d SCK=%d SD=%d",
+             sph ? "SPH0645" : "INMP441",
              (unsigned long)g_config.sample_rate, I2S_PIN_WS, I2S_PIN_SCK, I2S_PIN_SD);
     return ESP_OK;
 }

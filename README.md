@@ -2,8 +2,10 @@
 
 Warbler32 is a device for streaming RTSP audio to a bird identification server such as [BirdNET-Go](https://github.com/tphakala/birdnet-go). This is a low power device that can be solar and/or battery powered and placed further away (within WiFi range) from your house than you would if running the microphone on the BirdNET server itself (usually a raspberry pi). As an example, I'm running BirdNET-Go on a proxmox server and have 3 audio streams running to it at the same time. These 3 devices are located  about 600ft from each-other on my property so I can capture a wider range of birds.
 
-Supports two microphone options:
+Supports these microphone options:
 - **INMP441** — a cheap I2S digital microphone breakout, wired directly to the board.
+- **SPH0645** — Adafruit's I2S MEMS microphone breakout, same wiring as the INMP441
+  (select the model on the config page).
 - **USB microphone (Cleaner Audio)** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
   into the board's native USB port.
 
@@ -16,7 +18,7 @@ No programming experience is required to use this — just follow the steps belo
   flash/PSRAM configuration is auto-detected when you flash it, so you don't
   need to figure out which one you have.
 - A USB cable to connect it to your computer
-- Either an **INMP441** microphone breakout, or a **UAC-class USB microphone**
+- Either an **INMP441** or **SPH0645** microphone breakout, or a **UAC-class USB microphone**
 - A computer running Windows, macOS, or Linux
 
 ## 1. Get the code
@@ -94,16 +96,24 @@ firmware. The easiest way to use it is through **VS Code**, a free code editor.
 - If PlatformIO can't find the board at all, try a different USB cable (some
   are power-only and don't carry data) or a different USB port.
 
-## Wiring (INMP441 only — skip if using a USB microphone)
+## Wiring (I2S mic only — skip if using a USB microphone)
 
-| INMP441 pin | ESP32-S3 GPIO |
+The INMP441 and SPH0645 wire up identically (the SPH0645 labels its pins
+LRCL/BCLK/DOUT/SEL instead of WS/SCK/SD/L/R):
+
+| INMP441 / SPH0645 pin | ESP32-S3 GPIO |
 |---|---|
-| WS  | 42 |
-| SCK | 41 |
-| SD  | 40 |
-| L/R | GND |
+| WS / LRCL | 42 |
+| SCK / BCLK | 41 |
+| SD / DOUT | 40 |
+| L/R / SEL | GND |
 
-## Wiring (USB microphone only — skip if using an INMP441)
+The two mics need different I2S bus timing, so after setup pick your model
+under **Audio → I2S Mic Model** on the config page (default is INMP441).
+For the SPH0645, also enable the high-pass filter (e.g. 100 Hz) — that mic
+has a built-in DC offset the filter removes.
+
+## Wiring (USB microphone only — skip if using an I2S mic)
 
 Plug the mic into the board's native **"USB"** port — not the **"UART"** port
 used for flashing. If the mic never gets detected, check whether your board has
@@ -147,19 +157,32 @@ at the RTSP URL for live bird ID. Up to **two clients** can stream at once —
 handy for spot-checking in VLC while BirdNET-Go stays connected; a third
 connection is politely refused.
 
-The config page also lets you switch between the INMP441 and USB microphone,
-adjust sample rate/gain/filtering, and watch a live audio level meter — plus
+The config page also lets you switch between the I2S and USB microphone
+(and pick the I2S mic model), adjust sample rate/gain/filtering, and watch
+a live audio level meter — plus
 a **Listen** button that plays the live mic audio right in your browser
 (sub-second latency), so you can position the mic and tune it by ear from a
 phone without opening VLC. Audio
-and LED tweaks (gain, high-pass filter, noise gate, brightness) apply the
+and LED tweaks (gain, high-pass filter, brightness) apply the
 moment you hit Save — no reboot, no stream interruption. Changing the name,
 WiFi, input source, or sample rate still reboots the device.
 
 A **Status** card at the top shows live diagnostics — uptime, WiFi signal,
-free memory, connected RTSP clients, and dropped-audio count. The same data
-is available as JSON at `http://<name>.local/status` if you want to script
-your own monitoring.
+free memory, connected RTSP clients, dropped-audio count, and mic health.
+The same data is available as JSON at `http://<name>.local/status` if you
+want to script your own monitoring.
+
+### Mic-health detection
+
+A bird box that quietly dies shouldn't sit silent for days. The device
+watches the raw microphone signal (before any filtering or noise gating)
+and if it flatlines for 20 seconds — all zeros or a stuck value, as from a
+broken wire or a dead mic — the Status card shows **SILENT** with how long
+it's been out, `/status` reports `"mic":0`, and the status LED switches to
+a **magenta blink** (instead of green) so you can see it from across the
+yard. A healthy mic's own self-noise keeps the detector happy even in a
+completely quiet room, so there are no false alarms at night. Everything
+recovers automatically the moment real signal returns.
 
 ## Updating the firmware over WiFi
 
@@ -168,7 +191,8 @@ computer. On the config page's **Firmware** card, click **Check for
 Updates**: the device asks GitHub for the latest release, automatically
 picks the build matching its own hardware (Quad or Octal PSRAM variant),
 and if it's newer, one click downloads and installs it with a progress
-bar. The device reboots into the new firmware; WiFi and audio settings
+bar. Transient network hiccups are retried automatically (three attempts).
+The device reboots into the new firmware; WiFi and audio settings
 are kept.
 
 There's also a manual fallback under "Manual update": build locally with
