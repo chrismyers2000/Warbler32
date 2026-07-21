@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publish a Warbler32 release to GitHub with per-variant firmware assets.
 #
-#   scripts/release.sh 1.0.0
+#   scripts/release.sh 1.0.0 [notes_file]
 #
 # Tags the current commit v1.0.0, builds both PSRAM variants (quad + oct),
 # and publishes warbler32-quad.bin / warbler32-oct.bin as release assets.
@@ -10,12 +10,22 @@
 #
 # The tag is created BEFORE building so the firmware's embedded version
 # (git describe) equals the tag name — that's what devices compare against.
+#
+# notes_file: path to a short human-readable summary of what changed, used
+# as the GitHub release body. If omitted, falls back to GitHub's
+# auto-generated commit-list notes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:?usage: scripts/release.sh <version>   e.g. scripts/release.sh 1.0.0}"
+VERSION="${1:?usage: scripts/release.sh <version> [notes_file]   e.g. scripts/release.sh 1.0.0}"
+NOTES_FILE="${2:-}"
 TAG="v${VERSION#v}"
 PIO="${PIO:-$HOME/.local/bin/pio}"
+
+if [ -n "$NOTES_FILE" ] && [ ! -f "$NOTES_FILE" ]; then
+    echo "error: notes file not found: $NOTES_FILE" >&2
+    exit 1
+fi
 
 if [ -n "$(git status --porcelain)" ]; then
     echo "error: working tree not clean — commit or stash first" >&2
@@ -45,10 +55,17 @@ done
 rm -f sdkconfig.esp32s3 sdkconfig.defaults.detected
 
 git push origin "$TAG"
-gh release create "$TAG" \
-    "$OUT/warbler32-quad.bin" \
-    "$OUT/warbler32-oct.bin" \
-    --title "Warbler32 $TAG" --generate-notes
+if [ -n "$NOTES_FILE" ]; then
+    gh release create "$TAG" \
+        "$OUT/warbler32-quad.bin" \
+        "$OUT/warbler32-oct.bin" \
+        --title "Warbler32 $TAG" --notes-file "$NOTES_FILE"
+else
+    gh release create "$TAG" \
+        "$OUT/warbler32-quad.bin" \
+        "$OUT/warbler32-oct.bin" \
+        --title "Warbler32 $TAG" --generate-notes
+fi
 
 echo ""
 echo "released $TAG — devices will see it on their next 'Check for Updates'"
