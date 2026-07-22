@@ -69,6 +69,25 @@ static const char *s_html =
     "button{width:100%%;background:#3b82f6;color:#fff;border:none;"
     "padding:12px;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer;margin-top:4px}"
     "button:hover{background:#2563eb}"
+    ".layout{display:flex;gap:16px;align-items:flex-start}"
+    ".tabnav{display:flex;flex-direction:column;gap:4px;width:170px;flex-shrink:0}"
+    ".tabbtn{background:#1f2937;color:#9ca3af;border:1px solid #374151;text-align:left;"
+    "padding:10px 12px;border-radius:6px;font-size:13px;font-weight:400;cursor:pointer;"
+    "width:100%%;margin-top:0}"
+    ".tabbtn:hover{background:#374151}"
+    ".tabbtn.active{background:#3b82f6;color:#fff;border-color:#3b82f6}"
+    ".tabbtn.active:hover{background:#3b82f6}"
+    ".content{flex:1;min-width:0}"
+    ".tab-panel{display:none}"
+    ".tab-panel.active{display:block}"
+    ".statusStrip{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:#9ca3af;"
+    "background:#1f2937;border-radius:8px;padding:10px 14px;margin-bottom:16px}"
+    ".statusStrip b{color:#e5e7eb;font-weight:600}"
+    "@media(max-width:700px){"
+    ".layout{flex-direction:column}"
+    ".tabnav{flex-direction:row;width:100%%;overflow-x:auto;padding-bottom:2px;gap:6px}"
+    ".tabbtn{width:auto;white-space:nowrap;flex-shrink:0}"
+    "}"
     "</style></head><body>"
     "<div style=\"display:flex;justify-content:space-between;align-items:center\">"
     "<h1>Warbler32</h1>"
@@ -79,6 +98,26 @@ static const char *s_html =
     "<div class=\"bar\"></div>"
     "</div></div>"
     "%s"
+    "<div class=\"layout\">"
+    "<nav class=\"tabnav\">"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"dashboard\">Dashboard</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"device\">Device &amp; Network</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"audio\">Audio</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"hardware\">Hardware</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"diagnostics\">Diagnostics</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"firmware\">Firmware</button>"
+    "<button type=\"button\" class=\"tabbtn\" data-tab=\"advanced\">Advanced</button>"
+    "</nav>"
+    "<div class=\"content\">"
+    "<div class=\"statusStrip\">"
+    "<span>Up <b id=\"stUpM\">&ndash;</b></span>"
+    "<span>WiFi <b id=\"stWifiM\">&ndash;</b></span>"
+    "<span>Streaming <b id=\"stStrM\">&ndash;</b></span>"
+    "<span>Mic <b id=\"stMicM\">&ndash;</b></span>"
+    "<span>Watchdog <b id=\"stWdM\">&ndash;</b></span>"
+    "<span>Battery <b id=\"stBattM\">&ndash;</b></span>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-dashboard\">"
     "<div class=\"card\"><h2>Status</h2>"
     "<div class=\"row\" style=\"grid-template-columns:1fr 1fr 1fr;row-gap:10px\">"
     "<div><label>Uptime</label><span class=\"val\" id=\"stUp\">&ndash;</span></div>"
@@ -92,6 +131,8 @@ static const char *s_html =
     "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor. Shows an em dash if no INA219 is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
     "</div></div>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-device\">"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Device</h2>"
     "<label class=\"tip\" data-tip=\"Name for this device on your network. Becomes the mDNS address, e.g. 'warbler32' -> http://warbler32.local/. Letters, numbers, and hyphens only.\">Name</label>"
@@ -106,6 +147,14 @@ static const char *s_html =
     "<input type=\"range\" name=\"tx_power\" min=\"8\" max=\"20\" value=\"%d\""
     " oninput=\"txv.textContent=this.value\">"
     "</div>"
+    "<input type=\"hidden\" name=\"tab\" value=\"device\">"
+    "<button type=\"submit\">Save</button>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
+    "TX Power applies instantly; Name, SSID, and Password changes reboot the device.</p>"
+    "</form>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-audio\">"
+    "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Audio</h2>"
     "<label class=\"tip\" data-tip=\"Which microphone to capture from. I2S is a wired MEMS mic (pick the model below). USB Microphone requires a UAC-class mic plugged into the native USB port, detected at boot.\">Input Source</label>"
     "<select name=\"audio_source\" id=\"asrc\" onchange=\"toggleGainShift()\">"
@@ -151,9 +200,27 @@ static const char *s_html =
     " oninput=\"hdv.textContent=this.value>=60?'Full':this.value+' dB';drawHpf()\"></div>"
     "</div>"
     "</div>"
+    "</div>"
     "<label style=\"margin-top:2px\">Filter Response</label>"
     "<canvas id=\"hg\" width=\"600\" height=\"220\""
     " style=\"width:100%%;height:220px;border-radius:4px;background:#111827\"></canvas>"
+    "<input type=\"hidden\" name=\"tab\" value=\"audio\">"
+    "<button type=\"submit\">Save</button>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
+    "Gain and filter settings apply instantly; Input Source and Sample Rate changes reboot the device.</p>"
+    "</form>"
+    "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
+    "<canvas id=\"lv\" width=\"600\" height=\"72\""
+    " style=\"width:100%%;height:72px;border-radius:4px;background:#111827\"></canvas>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 4px\">Peak level &mdash; green &lt;55%%, amber &lt;80%%, red = clipping.</p>"
+    "<button type=\"button\" onclick=\"toggleMon(this)\""
+    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Start Monitor</button>"
+    "<button type=\"button\" id=\"lsnbtn\" onclick=\"toggleListen()\""
+    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 0 8px\">Listen</button>"
+    "</div>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-hardware\">"
+    "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>LED</h2>"
     "<label class=\"tip\" data-tip=\"Status LED brightness. 0 = off, 255 = maximum. Values of 20-50 work well indoors. Blue = connecting, solid green = connected, blinking green = streaming, orange = WiFi failed, red = setup mode.\">Brightness &nbsp;<span class=\"val\" id=\"bv\">%d</span></label>"
     "<input type=\"range\" name=\"led_brightness\" min=\"0\" max=\"255\" value=\"%d\""
@@ -182,6 +249,14 @@ static const char *s_html =
     "<input type=\"number\" step=\"0.01\" name=\"batt_full_v\" id=\"battFull\" value=\"%.2f\"></div>"
     "</div>"
     "</div>"
+    "<input type=\"hidden\" name=\"tab\" value=\"hardware\">"
+    "<button type=\"submit\">Save</button>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
+    "LED and Battery settings apply instantly.</p>"
+    "</form>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-diagnostics\">"
+    "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Diagnostics</h2>"
     "<label class=\"tip\" data-tip=\"Reboots the device if the audio reader task ever stops producing data entirely for about a minute (a wedged driver call, not just a quiet/dead mic - see Mic Health above for that). Off means a stall like that needs a manual power cycle to clear.\">Stall Watchdog</label>"
     "<select name=\"watchdog_enabled\">"
@@ -189,21 +264,14 @@ static const char *s_html =
     "<option value=\"0\"%s>Disabled</option>"
     "</select>"
     "</div>"
+    "<input type=\"hidden\" name=\"tab\" value=\"diagnostics\">"
     "<button type=\"submit\">Save</button>"
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
-    "Audio, LED, TX Power, Watchdog, &amp; Battery changes apply instantly; name, "
-    "SSID/password, input source, and sample rate changes reboot the device.</p>"
+    "Applies instantly.</p>"
     "</form>"
-    "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
-    "<canvas id=\"lv\" width=\"600\" height=\"72\""
-    " style=\"width:100%%;height:72px;border-radius:4px;background:#111827\"></canvas>"
-    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 4px\">Peak level &mdash; green &lt;55%%, amber &lt;80%%, red = clipping.</p>"
-    "<button type=\"button\" onclick=\"toggleMon(this)\""
-    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Start Monitor</button>"
-    "<button type=\"button\" id=\"lsnbtn\" onclick=\"toggleListen()\""
-    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 0 8px\">Listen</button>"
     "</div>"
-    "<div class=\"card\" style=\"margin-top:16px\"><h2>Firmware</h2>"
+    "<div class=\"tab-panel\" id=\"tab-firmware\">"
+    "<div class=\"card\"><h2>Firmware</h2>"
     "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Running <span style=\"color:#9ca3af\">%s</span>"
     " (%s board) &middot; built %s</p>"
     "<button type=\"button\" id=\"chkbtn\" onclick=\"doChk()\""
@@ -223,13 +291,18 @@ static const char *s_html =
     " style=\"background:#374151\">Upload &amp; Install</button>"
     "</details>"
     "</div>"
-    "<div class=\"card\" style=\"margin-top:16px\"><h2>Danger Zone</h2>"
+    "</div>"
+    "<div class=\"tab-panel\" id=\"tab-advanced\">"
+    "<div class=\"card\"><h2>Danger Zone</h2>"
     "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Erases saved WiFi and audio "
     "settings and reboots into setup mode (broadcasting \"" WIFI_AP_SSID "\").</p>"
     "<form method=\"POST\" action=\"/reset\" onsubmit=\"return confirm('Factory reset? This erases "
     "saved WiFi and audio settings.');\">"
     "<button type=\"submit\" style=\"background:#dc2626\">Factory Reset</button>"
     "</form>"
+    "</div>"
+    "</div>"
+    "</div>"
     "</div>"
     "<script>"
     "(function(){"
@@ -255,25 +328,29 @@ static const char *s_html =
     "function stPoll(){"
     "fetch('/status').then(function(r){return r.json();}).then(function(j){"
     "document.getElementById('stUp').textContent=stFmt(j.uptime);"
+    "document.getElementById('stUpM').textContent=stFmt(j.uptime);"
     "document.getElementById('stWifi').textContent=j.rssi?j.rssi+' dBm':'\\u2013';"
+    "document.getElementById('stWifiM').textContent=j.rssi?j.rssi+' dBm':'\\u2013';"
     "document.getElementById('stHeap').textContent=Math.round(j.heap/1024)+' KB';"
     "document.getElementById('stCli').textContent=j.clients+' / '+j.max_clients;"
     "document.getElementById('stStr').textContent=j.streaming?j.streaming+' active':'no';"
+    "document.getElementById('stStrM').textContent=j.streaming?j.streaming+' active':'no';"
     "document.getElementById('stOvr').textContent=j.overruns;"
     "document.getElementById('stDma').textContent=j.dma_ovf;"
-    "var sm=document.getElementById('stMic');"
-    "if(!j.mic_present){sm.textContent='NO MIC';sm.style.color='#f87171';}"
-    "else if(j.mic){sm.textContent='OK';sm.style.color='';}"
-    "else{sm.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color='#f87171';}"
-    "var sw=document.getElementById('stWd');"
-    "if(!j.wd_enabled){sw.textContent='OFF';sw.style.color='';}"
-    "else if(!j.wd_stall){sw.textContent='OK';sw.style.color='';}"
-    "else{sw.textContent='STALLED '+stFmt(j.wd_stall);sw.style.color='#f87171';}"
-    "var sb=document.getElementById('stBatt');"
+    "var sm=document.getElementById('stMic'),smM=document.getElementById('stMicM');"
+    "if(!j.mic_present){sm.textContent=smM.textContent='NO MIC';sm.style.color=smM.style.color='#f87171';}"
+    "else if(j.mic){sm.textContent=smM.textContent='OK';sm.style.color=smM.style.color='';}"
+    "else{sm.textContent=smM.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color=smM.style.color='#f87171';}"
+    "var sw=document.getElementById('stWd'),swM=document.getElementById('stWdM');"
+    "if(!j.wd_enabled){sw.textContent=swM.textContent='OFF';sw.style.color=swM.style.color='';}"
+    "else if(!j.wd_stall){sw.textContent=swM.textContent='OK';sw.style.color=swM.style.color='';}"
+    "else{sw.textContent=swM.textContent='STALLED '+stFmt(j.wd_stall);sw.style.color=swM.style.color='#f87171';}"
+    "var sb=document.getElementById('stBatt'),sbM=document.getElementById('stBattM');"
     "var bi=document.getElementById('battIcon');"
-    "if(!j.batt_present){sb.textContent='\\u2013';sb.style.color='';bi.style.display='none';}"
-    "else{sb.textContent=(j.batt_mv/1000).toFixed(2)+' V ('+j.batt_pct+'%%)'"
-    "+(j.batt_low?' LOW':'');sb.style.color=j.batt_low?'#f87171':'';"
+    "if(!j.batt_present){sb.textContent=sbM.textContent='\\u2013';sb.style.color=sbM.style.color='';bi.style.display='none';}"
+    "else{var btxt=(j.batt_mv/1000).toFixed(2)+' V ('+j.batt_pct+'%%)'"
+    "+(j.batt_low?' LOW':'');sb.textContent=sbM.textContent=btxt;"
+    "sb.style.color=sbM.style.color=j.batt_low?'#f87171':'';"
     "bi.style.display='flex';bi.classList.toggle('low',j.batt_low);"
     "var filled=Math.round(j.batt_pct/10),bars=bi.querySelectorAll('.bar');"
     "for(var k=0;k<bars.length;k++)bars[k].classList.toggle('filled',k<filled);}"
@@ -474,6 +551,14 @@ static const char *s_html =
     "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
     "drawHpf();"
     "window.addEventListener('resize',drawHpf);"
+    "function showTab(id){"
+    "document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id==='tab-'+id);});"
+    "document.querySelectorAll('.tabbtn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===id);});"
+    "location.hash=id;"
+    "if(id==='audio')drawHpf();"
+    "}"
+    "document.querySelectorAll('.tabbtn').forEach(function(b){b.onclick=function(){showTab(b.dataset.tab);};});"
+    "showTab(location.hash.slice(1)||'dashboard');"
     "})();"
     "</script>"
     "</body></html>";
@@ -496,6 +581,17 @@ static void url_decode(char *s)
         }
     }
     *w = '\0';
+}
+
+// True if `key=` appears anywhere in the POST body, whether or not it has a
+// value. Distinguishes "field absent from this form" (leave untouched) from
+// "field present but blank" (e.g. password intentionally cleared) — a
+// distinction get_field()'s empty-string return can't make on its own.
+static bool has_field(const char *body, const char *key)
+{
+    char needle[48];
+    snprintf(needle, sizeof(needle), "%s=", key);
+    return strstr(body, needle) != NULL;
 }
 
 static void get_field(const char *body, const char *key, char *out, size_t n)
@@ -571,7 +667,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *app = esp_app_get_description();
 
-    const size_t bufsz = 24576;
+    const size_t bufsz = 32768;
     char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
@@ -679,8 +775,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     get_field(body, "ssid", val, sizeof(val));
     if (val[0]) strlcpy(g_config.wifi_ssid, val, sizeof(g_config.wifi_ssid));
 
+    // Unlike other fields, blank is a meaningful value here (clears a saved
+    // password for an open network) rather than "leave unchanged" — but
+    // only when the field is actually part of this form (Device & Network
+    // tab). Other tabs' forms don't include a password input at all.
     get_field(body, "password", val, sizeof(val));
-    strlcpy(g_config.wifi_password, val, sizeof(g_config.wifi_password));
+    if (has_field(body, "password"))
+        strlcpy(g_config.wifi_password, val, sizeof(g_config.wifi_password));
 
     get_field(body, "tx_power", val, sizeof(val));
     if (val[0]) {
@@ -782,6 +883,28 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     get_field(body, "watchdog_enabled", val, sizeof(val));
     if (val[0]) g_config.watchdog_enabled = atoi(val) ? 1 : 0;
 
+    // Which tab's form posted this — used only to send the browser back to
+    // that tab after the reload, so saving e.g. Audio settings doesn't dump
+    // the user back at the top of the page. Whitelisted before reflecting
+    // into the response HTML below.
+    char tab[24];
+    get_field(body, "tab", tab, sizeof(tab));
+    static const char *valid_tabs[] = {
+        "dashboard", "device", "audio", "hardware", "diagnostics", "firmware", "advanced"
+    };
+    const char *redirect = "/";
+    for (size_t i = 0; i < sizeof(valid_tabs) / sizeof(valid_tabs[0]); i++) {
+        if (strcmp(tab, valid_tabs[i]) == 0) {
+            redirect = valid_tabs[i];
+            break;
+        }
+    }
+    char redirect_url[32];
+    if (redirect[0] != '/')
+        snprintf(redirect_url, sizeof(redirect_url), "/#%s", redirect);
+    else
+        strlcpy(redirect_url, redirect, sizeof(redirect_url));
+
     free(body);
     app_config_save();
     wifi_manager_apply_tx_power();
@@ -796,8 +919,10 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     httpd_resp_set_type(req, "text/html");
 
+    char resp[512];
+    int rlen;
     if (reboot_needed) {
-        static const char resp[] =
+        rlen = snprintf(resp, sizeof(resp),
             "<!DOCTYPE html><html><head>"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             "<title>Warbler32</title></head>"
@@ -806,13 +931,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             "<h2 style=\"color:#34d399\">Saved!</h2>"
             "<p>Device is rebooting&hellip;</p>"
             "<p style=\"color:#6b7280;font-size:13px\">Page will reload in 8 seconds.</p>"
-            "<script>setTimeout(()=>{location.href='/'},8000)</script>"
-            "</body></html>";
-        httpd_resp_send(req, resp, strlen(resp));
+            "<script>setTimeout(()=>{location.href='%s'},8000)</script>"
+            "</body></html>", redirect_url);
+        httpd_resp_send(req, resp, rlen);
         xTaskCreate(reboot_task, "reboot", 1024, NULL, 5, NULL);
     } else {
         ESP_LOGI(TAG, "config saved, applied live (no reboot)");
-        static const char resp[] =
+        rlen = snprintf(resp, sizeof(resp),
             "<!DOCTYPE html><html><head>"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             "<title>Warbler32</title></head>"
@@ -820,9 +945,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             "text-align:center;padding:60px 16px\">"
             "<h2 style=\"color:#34d399\">Saved!</h2>"
             "<p>Settings applied &mdash; no reboot needed.</p>"
-            "<script>setTimeout(()=>{location.href='/'},1200)</script>"
-            "</body></html>";
-        httpd_resp_send(req, resp, strlen(resp));
+            "<script>setTimeout(()=>{location.href='%s'},1200)</script>"
+            "</body></html>", redirect_url);
+        httpd_resp_send(req, resp, rlen);
     }
     return ESP_OK;
 }
