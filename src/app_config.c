@@ -30,6 +30,8 @@ esp_err_t app_config_load(void)
     g_config.batt_low_mv    = BATTERY_DEFAULT_LOW_MV;
     g_config.batt_nom_mv    = BATTERY_DEFAULT_NOMINAL_MV;
     g_config.batt_full_mv   = BATTERY_DEFAULT_FULL_MV;
+    g_config.wifi_tx_power_dbm = WIFI_TX_POWER_DBM_DEFAULT;
+    g_config.watchdog_enabled  = PIPELINE_WATCHDOG_DEFAULT_ENABLED;
 
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_NS, NVS_READONLY, &h);
@@ -61,6 +63,8 @@ esp_err_t app_config_load(void)
     nvs_get_u16(h, "batt_low_mv", &g_config.batt_low_mv);
     nvs_get_u16(h, "batt_nom_mv", &g_config.batt_nom_mv);
     nvs_get_u16(h, "batt_full_mv",&g_config.batt_full_mv);
+    nvs_get_u8 (h, "tx_pwr",      &g_config.wifi_tx_power_dbm);
+    nvs_get_u8 (h, "wd_enable",   &g_config.watchdog_enabled);
 
     nvs_close(h);
 
@@ -93,6 +97,8 @@ esp_err_t app_config_save(void)
     nvs_set_u16(h, "batt_low_mv", g_config.batt_low_mv);
     nvs_set_u16(h, "batt_nom_mv", g_config.batt_nom_mv);
     nvs_set_u16(h, "batt_full_mv",g_config.batt_full_mv);
+    nvs_set_u8 (h, "tx_pwr",      g_config.wifi_tx_power_dbm);
+    nvs_set_u8 (h, "wd_enable",   g_config.watchdog_enabled);
     nvs_commit(h);
     nvs_close(h);
 

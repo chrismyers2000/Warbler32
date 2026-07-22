@@ -21,6 +21,17 @@
 // fallback for a fresh device or an emptied-out name field.
 #define DEVICE_NAME_DEFAULT  "warbler32"
 
+// Max WiFi TX power, in dBm (converted to esp_wifi_set_max_tx_power()'s
+// quarter-dBm units at the call site). Applied on every boot and live on
+// /save — no reboot needed. User-configurable via the web UI; 20 dBm is
+// effectively "don't attenuate" (matches the chip's own ceiling). Lowering
+// this is a useful diagnostic/mitigation for RF noise coupling from WiFi TX
+// bursts into nearby analog mic wiring/power rails — worth trying if audio
+// is noisy despite a stable link.
+#define WIFI_TX_POWER_DBM_DEFAULT  20
+#define WIFI_TX_POWER_DBM_MIN      8
+#define WIFI_TX_POWER_DBM_MAX      20
+
 // =============================================================================
 // BOOT button (GPIO0) gestures — checked only while the app is already
 // running, never at power-on: GPIO0's bootloader-strapping role would
@@ -97,6 +108,21 @@
 #define MIC_HEALTH_MIN_P2P     4
 #define MIC_HEALTH_TIMEOUT_MS  20000
 
+// Pipeline stall watchdog: distinct from mic-health above. Mic-health
+// watches *content* of the samples the reader task delivers (catches a
+// flatlined mic while the task itself is fine). This watches whether the
+// reader task is delivering samples *at all* — catches a wedged task/driver
+// (e.g. an I2S read call that never returns) that mic-health can't see,
+// since a hung task never calls mic_health_report() again either. A stall
+// this severe generally isn't recoverable in-place, so the response is a
+// full reboot: samples the pipeline's chunk counter every CHECK_INTERVAL_MS
+// and reboots once it's seen zero forward progress for STALL_CHECKS
+// consecutive samples (~CHECK_INTERVAL_MS * STALL_CHECKS of total silence).
+// User-toggleable via the web UI (app_config.h watchdog_enabled).
+#define PIPELINE_WATCHDOG_DEFAULT_ENABLED  1
+#define PIPELINE_WATCHDOG_CHECK_INTERVAL_MS  15000
+#define PIPELINE_WATCHDOG_STALL_CHECKS       3
+
 // GitHub OTA download: retry transient network failures (mesh WiFi hiccups)
 #define OTA_GH_ATTEMPTS        3
 #define OTA_GH_RETRY_DELAY_MS  3000
@@ -164,6 +190,11 @@
 #define TASK_BATTERY_STACK      3072
 #define TASK_BATTERY_PRIORITY   2
 #define TASK_BATTERY_CORE       1
+
+// Background pipeline-stall watchdog task (see PIPELINE_WATCHDOG_* above)
+#define TASK_WATCHDOG_STACK     3072
+#define TASK_WATCHDOG_PRIORITY  2
+#define TASK_WATCHDOG_CORE      1
 
 // =============================================================================
 // Battery monitor (INA219 I2C voltage sensor) — optional. If no INA219 is

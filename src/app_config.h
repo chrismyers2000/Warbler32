@@ -25,6 +25,8 @@ typedef struct {
     uint16_t batt_low_mv;    // pack-level threshold in mV — always the value
     uint16_t batt_nom_mv;    // actually used, whether preset-derived or custom
     uint16_t batt_full_mv;
+    uint8_t  wifi_tx_power_dbm; // max WiFi TX power, 8-20 dBm (see WIFI_TX_POWER_*)
+    uint8_t  watchdog_enabled;  // reboot if the audio pipeline stalls (see pipeline_watchdog.h)
 } app_config_t;
 
 extern app_config_t g_config;

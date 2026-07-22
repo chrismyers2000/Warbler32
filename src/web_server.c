@@ -3,6 +3,7 @@
 #include "audio_pipeline.h"
 #include "mic_health.h"
 #include "battery_monitor.h"
+#include "pipeline_watchdog.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
 #include "config.h"
@@ -87,6 +88,7 @@ static const char *s_html =
     "<div><label>Streaming</label><span class=\"val\" id=\"stStr\">&ndash;</span></div>"
     "<div><label>Audio Drops</label><span class=\"val\" id=\"stOvr\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor. Shows an em dash if no INA219 is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
     "</div></div>"
     "<form method=\"POST\" action=\"/save\">"
@@ -99,6 +101,9 @@ static const char *s_html =
     "<input name=\"ssid\" value=\"%s\" autocomplete=\"off\" spellcheck=\"false\">"
     "<label class=\"tip\" data-tip=\"WiFi password. Leave blank for open networks. Stored in device flash.\">Password</label>"
     "<input name=\"password\" type=\"password\" value=\"%s\" autocomplete=\"new-password\">"
+    "<label class=\"tip\" data-tip=\"Maximum WiFi transmit power. Lower values reduce range but can also reduce RF noise coupling into nearby mic wiring/power rails if audio sounds noisy despite a stable connection. 20 dBm = full power.\">TX Power &nbsp;<span class=\"val\" id=\"txv\">%d</span> dBm</label>"
+    "<input type=\"range\" name=\"tx_power\" min=\"8\" max=\"20\" value=\"%d\""
+    " oninput=\"txv.textContent=this.value\">"
     "</div>"
     "<div class=\"card\"><h2>Audio</h2>"
     "<label class=\"tip\" data-tip=\"Which microphone to capture from. I2S is a wired MEMS mic (pick the model below). USB Microphone requires a UAC-class mic plugged into the native USB port, detected at boot.\">Input Source</label>"
@@ -176,10 +181,17 @@ static const char *s_html =
     "<input type=\"number\" step=\"0.01\" name=\"batt_full_v\" id=\"battFull\" value=\"%.2f\"></div>"
     "</div>"
     "</div>"
+    "<div class=\"card\"><h2>Diagnostics</h2>"
+    "<label class=\"tip\" data-tip=\"Reboots the device if the audio reader task ever stops producing data entirely for about a minute (a wedged driver call, not just a quiet/dead mic - see Mic Health above for that). Off means a stall like that needs a manual power cycle to clear.\">Stall Watchdog</label>"
+    "<select name=\"watchdog_enabled\">"
+    "<option value=\"1\"%s>Enabled</option>"
+    "<option value=\"0\"%s>Disabled</option>"
+    "</select>"
+    "</div>"
     "<button type=\"submit\">Save</button>"
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
-    "Audio, LED, &amp; Battery changes apply instantly; name, WiFi, input "
-    "source, and sample rate changes reboot the device.</p>"
+    "Audio, LED, TX Power, Watchdog, &amp; Battery changes apply instantly; name, "
+    "SSID/password, input source, and sample rate changes reboot the device.</p>"
     "</form>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
     "<canvas id=\"lv\" width=\"600\" height=\"72\""
@@ -251,6 +263,10 @@ static const char *s_html =
     "if(!j.mic_present){sm.textContent='NO MIC';sm.style.color='#f87171';}"
     "else if(j.mic){sm.textContent='OK';sm.style.color='';}"
     "else{sm.textContent='SILENT '+stFmt(j.mic_silent);sm.style.color='#f87171';}"
+    "var sw=document.getElementById('stWd');"
+    "if(!j.wd_enabled){sw.textContent='OFF';sw.style.color='';}"
+    "else if(!j.wd_stall){sw.textContent='OK';sw.style.color='';}"
+    "else{sw.textContent='STALLED '+stFmt(j.wd_stall);sw.style.color='#f87171';}"
     "var sb=document.getElementById('stBatt');"
     "var bi=document.getElementById('battIcon');"
     "if(!j.batt_present){sb.textContent='\\u2013';sb.style.color='';bi.style.display='none';}"
@@ -562,6 +578,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         name_esc,
         ssid_esc,
         pass_esc,
+        (int)g_config.wifi_tx_power_dbm, (int)g_config.wifi_tx_power_dbm,
         g_config.audio_source == AUDIO_SOURCE_I2S ? " selected" : "",
         g_config.audio_source == AUDIO_SOURCE_USB ? " selected" : "",
         g_config.mic_model == MIC_MODEL_INMP441 ? " selected" : "",
@@ -591,6 +608,8 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.batt_low_mv  / 1000.0,
         g_config.batt_nom_mv  / 1000.0,
         g_config.batt_full_mv / 1000.0,
+        g_config.watchdog_enabled ? " selected" : "",
+        !g_config.watchdog_enabled ? " selected" : "",
         app->version, ota_board_variant(), app->date);
 
     // snprintf returns the would-be length: if the page outgrows the buffer,
@@ -660,6 +679,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     get_field(body, "password", val, sizeof(val));
     strlcpy(g_config.wifi_password, val, sizeof(g_config.wifi_password));
+
+    get_field(body, "tx_power", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= WIFI_TX_POWER_DBM_MIN && v <= WIFI_TX_POWER_DBM_MAX)
+            g_config.wifi_tx_power_dbm = (uint8_t)v;
+    }
 
     get_field(body, "audio_source", val, sizeof(val));
     if (val[0]) {
@@ -751,8 +777,12 @@ static esp_err_t save_post_handler(httpd_req_t *req)
         if (v >= 0 && v <= 60) g_config.batt_full_mv = (uint16_t)(v * 1000 + 0.5);
     }
 
+    get_field(body, "watchdog_enabled", val, sizeof(val));
+    if (val[0]) g_config.watchdog_enabled = atoi(val) ? 1 : 0;
+
     free(body);
     app_config_save();
+    wifi_manager_apply_tx_power();
 
     bool reboot_needed =
         strcmp(old_name, g_config.device_name)   != 0 ||
@@ -1053,12 +1083,13 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     }
     bool batt_low = batt_present && batt_mv < g_config.batt_low_mv;
 
-    char json[384];
+    char json[448];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
         "\"overruns\":%u,\"peak\":%d,\"preview\":%d,"
         "\"mic\":%d,\"mic_silent\":%u,\"mic_present\":%d,"
+        "\"wd_enabled\":%d,\"wd_stall\":%u,"
         "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
         "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
@@ -1073,6 +1104,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         atomic_load(&s_preview_busy) ? 1 : 0,
         mic_health_ok() ? 1 : 0, (unsigned)mic_health_silent_secs(),
         audio_pipeline_is_active() ? 1 : 0,
+        g_config.watchdog_enabled ? 1 : 0, (unsigned)pipeline_watchdog_stall_secs(),
         batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 

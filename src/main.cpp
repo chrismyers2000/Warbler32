@@ -6,6 +6,7 @@
 #include "web_server.h"
 #include "audio_pipeline.h"
 #include "rtsp_server.h"
+#include "pipeline_watchdog.h"
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -50,6 +51,11 @@ extern "C" void app_main(void)
 
         // Start RTSP server — clients connect and get PCM L16 audio
         ESP_ERROR_CHECK(rtsp_server_start());
+
+        // Background: reboots the device if the audio reader task ever
+        // stops making progress entirely (wedged driver call, etc) — see
+        // pipeline_watchdog.h. User-toggleable in the web UI.
+        ESP_ERROR_CHECK(pipeline_watchdog_start());
     }
 
     // First boot after a web OTA update: everything above came up, so commit

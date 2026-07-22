@@ -29,6 +29,7 @@ static SemaphoreHandle_t s_readers_mtx = NULL;
 
 static volatile int16_t s_peak = 0;
 static atomic_uint      s_overruns = 0;
+static atomic_uint      s_chunk_count = 0;
 static atomic_bool      s_active = false;
 static size_t (*s_mic_read)(int16_t *buf, size_t count) = i2s_mic_read;
 
@@ -64,6 +65,8 @@ static void i2s_reader_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+
+        atomic_fetch_add(&s_chunk_count, 1);
 
         // Track peak amplitude for the level monitor
         int16_t pk = 0;
@@ -238,6 +241,11 @@ int audio_pipeline_get_peak_pct(void)
 uint32_t audio_pipeline_get_overruns(void)
 {
     return atomic_load(&s_overruns);
+}
+
+uint32_t audio_pipeline_get_chunk_count(void)
+{
+    return atomic_load(&s_chunk_count);
 }
 
 size_t audio_pipeline_read(int reader, uint8_t *buf, size_t bytes, uint32_t timeout_ms)

@@ -136,6 +136,19 @@ static void enter_ap_mode(void)
 
 // Advance to the next channel in the manual rotation. No-op if not currently
 // broadcasting the setup AP. Returns the newly active channel, or 0.
+// esp_wifi_set_max_tx_power() takes int8_t units of 0.25 dBm; the config
+// field is plain dBm, so convert at the call site rather than storing the
+// odd unit in NVS/the web UI.
+void wifi_manager_apply_tx_power(void)
+{
+    int8_t units = (int8_t)(g_config.wifi_tx_power_dbm * 4);
+    esp_err_t ret = esp_wifi_set_max_tx_power(units);
+    if (ret == ESP_OK)
+        ESP_LOGI(TAG, "WiFi TX power set to %d dBm", g_config.wifi_tx_power_dbm);
+    else
+        ESP_LOGW(TAG, "esp_wifi_set_max_tx_power failed: %s", esp_err_to_name(ret));
+}
+
 uint8_t wifi_manager_cycle_ap_channel(void)
 {
     if (!s_ap_mode) return 0;
@@ -230,6 +243,11 @@ esp_err_t wifi_manager_start(void)
         ESP_ERROR_CHECK(esp_wifi_start());
         s_wifi_started = true;
     }
+
+    // Radio is up in either branch above (STA or setup-AP) — apply the
+    // configured TX power ceiling now rather than waiting for STA to fully
+    // associate, since the setup AP's own beacon/handshake benefits too.
+    wifi_manager_apply_tx_power();
 
     if (s_ap_mode) xEventGroupSetBits(s_wifi_event_group, WIFI_READY_BIT);
 

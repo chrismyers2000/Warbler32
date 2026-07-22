@@ -18,6 +18,11 @@ bool wifi_manager_is_ap_mode(void);
 // (returns 0) unless currently broadcasting the setup AP.
 uint8_t wifi_manager_cycle_ap_channel(void);
 
+// Pushes g_config.wifi_tx_power_dbm to the radio. Safe to call any time
+// after wifi_manager_start() — used both at startup and to apply a change
+// from the web UI live, without a reboot.
+void wifi_manager_apply_tx_power(void);
+
 #ifdef __cplusplus
 }
 #endif

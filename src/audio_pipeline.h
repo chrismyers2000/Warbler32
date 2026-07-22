@@ -37,6 +37,13 @@ size_t audio_pipeline_read(int reader, uint8_t *buf, size_t bytes, uint32_t time
 int      audio_pipeline_get_peak_pct(void);
 uint32_t audio_pipeline_get_overruns(void);   // total packets dropped on full buffers
 
+// Cumulative count of chunks the reader task has pulled from the mic since
+// boot. A pure liveness counter for pipeline_watchdog.h — it advances on
+// every successful read regardless of audio content, so it keeps moving
+// even during a mic-health flatline and only stops if the reader task
+// itself stalls (wedged driver call, etc).
+uint32_t audio_pipeline_get_chunk_count(void);
+
 #ifdef __cplusplus
 }
 #endif
