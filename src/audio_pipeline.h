@@ -44,6 +44,11 @@ uint32_t audio_pipeline_get_overruns(void);   // total packets dropped on full b
 // itself stalls (wedged driver call, etc).
 uint32_t audio_pipeline_get_chunk_count(void);
 
+// DMA-level receive queue overflows on the I2S backend (samples the driver
+// overwrote before i2s_mic_read() drained them) — 0 when the USB mic is
+// selected, which has no equivalent counter.
+uint32_t audio_pipeline_get_dma_overflows(void);
+
 #ifdef __cplusplus
 }
 #endif

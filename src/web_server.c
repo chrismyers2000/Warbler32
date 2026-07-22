@@ -87,6 +87,7 @@ static const char *s_html =
     "<div><label>RTSP Clients</label><span class=\"val\" id=\"stCli\">&ndash;</span></div>"
     "<div><label>Streaming</label><span class=\"val\" id=\"stStr\">&ndash;</span></div>"
     "<div><label>Audio Drops</label><span class=\"val\" id=\"stOvr\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Samples the I2S driver overwrote at the DMA level before the reader task could pull them out - a lower-level drop than Audio Drops above, which only counts packets lost once they reach the streaming ring buffer. Always 0 on the USB mic.\">DMA Overflows</label><span class=\"val\" id=\"stDma\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor. Shows an em dash if no INA219 is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
@@ -259,6 +260,7 @@ static const char *s_html =
     "document.getElementById('stCli').textContent=j.clients+' / '+j.max_clients;"
     "document.getElementById('stStr').textContent=j.streaming?j.streaming+' active':'no';"
     "document.getElementById('stOvr').textContent=j.overruns;"
+    "document.getElementById('stDma').textContent=j.dma_ovf;"
     "var sm=document.getElementById('stMic');"
     "if(!j.mic_present){sm.textContent='NO MIC';sm.style.color='#f87171';}"
     "else if(j.mic){sm.textContent='OK';sm.style.color='';}"
@@ -1083,11 +1085,11 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     }
     bool batt_low = batt_present && batt_mv < g_config.batt_low_mv;
 
-    char json[448];
+    char json[480];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
-        "\"overruns\":%u,\"peak\":%d,\"preview\":%d,"
+        "\"overruns\":%u,\"dma_ovf\":%u,\"peak\":%d,\"preview\":%d,"
         "\"mic\":%d,\"mic_silent\":%u,\"mic_present\":%d,"
         "\"wd_enabled\":%d,\"wd_stall\":%u,"
         "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
@@ -1100,6 +1102,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         rtsp_server_client_count(), RTSP_MAX_CLIENTS,
         rtsp_server_streaming_count(),
         (unsigned)audio_pipeline_get_overruns(),
+        (unsigned)audio_pipeline_get_dma_overflows(),
         audio_pipeline_get_peak_pct(),
         atomic_load(&s_preview_busy) ? 1 : 0,
         mic_health_ok() ? 1 : 0, (unsigned)mic_health_silent_secs(),

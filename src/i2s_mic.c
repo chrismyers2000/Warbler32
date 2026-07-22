@@ -7,11 +7,19 @@
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
+#include <stdatomic.h>
 
 static const char *TAG = "i2s_mic";
 
 static i2s_chan_handle_t s_rx_chan = NULL;
 static audio_dsp_state_t s_dsp;
+static atomic_uint       s_dma_overflows = 0;
+
+static bool IRAM_ATTR on_recv_q_ovf(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    atomic_fetch_add(&s_dma_overflows, 1);
+    return false;
+}
 
 esp_err_t i2s_mic_init(void)
 {
@@ -59,6 +67,11 @@ esp_err_t i2s_mic_init(void)
         return ret;
     }
 
+    i2s_event_callbacks_t cbs = { .on_recv_q_ovf = on_recv_q_ovf };
+    ret = i2s_channel_register_event_callback(s_rx_chan, &cbs, NULL);
+    if (ret != ESP_OK)
+        ESP_LOGW(TAG, "i2s_channel_register_event_callback failed: %s", esp_err_to_name(ret));
+
     ret = i2s_channel_enable(s_rx_chan);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "i2s_channel_enable failed: %s", esp_err_to_name(ret));
@@ -102,4 +115,9 @@ size_t i2s_mic_read(int16_t *buf, size_t count)
 
     audio_dsp_process(&s_dsp, buf, out_idx);
     return out_idx;
+}
+
+uint32_t i2s_mic_get_dma_overflows(void)
+{
+    return atomic_load(&s_dma_overflows);
 }

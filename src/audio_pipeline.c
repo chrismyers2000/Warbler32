@@ -248,6 +248,11 @@ uint32_t audio_pipeline_get_chunk_count(void)
     return atomic_load(&s_chunk_count);
 }
 
+uint32_t audio_pipeline_get_dma_overflows(void)
+{
+    return g_config.audio_source == AUDIO_SOURCE_USB ? 0 : i2s_mic_get_dma_overflows();
+}
+
 size_t audio_pipeline_read(int reader, uint8_t *buf, size_t bytes, uint32_t timeout_ms)
 {
     if (reader < 0 || reader >= PIPELINE_MAX_READERS) return 0;
