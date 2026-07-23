@@ -250,7 +250,10 @@ esp_err_t wifi_manager_start(void)
         wifi_config_t wifi_cfg = {};
         strlcpy((char *)wifi_cfg.sta.ssid,     g_config.wifi_ssid,     sizeof(wifi_cfg.sta.ssid));
         strlcpy((char *)wifi_cfg.sta.password, g_config.wifi_password, sizeof(wifi_cfg.sta.password));
-        wifi_cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+        // A WPA2 threshold would refuse to associate with an open AP, and
+        // the web UI explicitly supports blank-password open networks.
+        wifi_cfg.sta.threshold.authmode =
+            g_config.wifi_password[0] == '\0' ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
         ESP_LOGI(TAG, "connecting to \"%s\"...", g_config.wifi_ssid);

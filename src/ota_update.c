@@ -394,6 +394,12 @@ static esp_err_t gh_attempt(uint8_t *buf, const char **emsg)
 
     int64_t clen = esp_http_client_get_content_length(client);
     size_t total = (clen > 0) ? (size_t)clen : s_asset_size;
+    if (total == 0) {
+        // No Content-Length and no cached asset size — can't size the OTA
+        // partition write or compute progress (guards the division below).
+        *emsg = "Download failed (unknown image size)";
+        goto out;
+    }
 
     if (ota_engine_begin(total, emsg) != ESP_OK) {
         ret = ESP_ERR_INVALID_STATE;

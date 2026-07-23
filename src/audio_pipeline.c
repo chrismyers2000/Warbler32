@@ -97,16 +97,21 @@ static void i2s_reader_task(void *arg)
             if (!s_readers[r].active) continue;
 
             // Non-blocking send; a slow client only loses its own audio.
-            // On full, evict the oldest chunk and retry once.
+            // On full, the new chunk is dropped rather than evicting the
+            // oldest: eviction made this task a second concurrent receiver
+            // on a byte ringbuffer whose consumer (audio_pipeline_read)
+            // takes no lock, and out-of-order item returns can corrupt the
+            // buffer's accounting. A client 2s behind is being torn down by
+            // send_all()'s 1.5s stall budget anyway.
             if (xRingbufferSend(s_readers[r].rb, pcm, bytes, 0) != pdTRUE) {
-                size_t dummy_size;
-                void *dummy = xRingbufferReceiveUpTo(s_readers[r].rb, &dummy_size,
-                                                     0, bytes);
-                if (dummy) vRingbufferReturnItem(s_readers[r].rb, dummy);
-                if (xRingbufferSend(s_readers[r].rb, pcm, bytes, 0) != pdTRUE)
-                    ESP_LOGW(TAG, "reader %d buffer full, audio dropped", r);
                 if (s_readers[r].count_overruns)
                     atomic_fetch_add(&s_overruns, 1);
+                static uint32_t s_drop_logged_ms = 0;
+                uint32_t now_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                if (now_ms - s_drop_logged_ms >= 1000) {
+                    ESP_LOGW(TAG, "reader %d buffer full, audio dropped", r);
+                    s_drop_logged_ms = now_ms;
+                }
             }
         }
         xSemaphoreGive(s_readers_mtx);

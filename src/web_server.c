@@ -735,13 +735,30 @@ static void reboot_task(void *arg)
 static esp_err_t save_post_handler(httpd_req_t *req)
 {
     int body_len = req->content_len;
-    if (body_len <= 0 || body_len > 1023) body_len = 1023;
+    if (body_len <= 0 || body_len > 1023) {
+        // Never parse a truncated form: a field cut mid-value (e.g. a
+        // clipped password) would still pass validation and get persisted.
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad form size");
+        return ESP_FAIL;
+    }
 
     char *body = malloc(body_len + 1);
     if (!body) return ESP_ERR_NO_MEM;
 
-    int received = httpd_req_recv(req, body, body_len);
-    if (received <= 0) { free(body); return ESP_FAIL; }
+    // recv can deliver the body in pieces — loop until it's all here, for
+    // the same reason as above.
+    int received = 0, timeouts = 0;
+    while (received < body_len) {
+        int n = httpd_req_recv(req, body + received, body_len - received);
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts < 5) continue;
+        if (n <= 0) {
+            free(body);
+            httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Upload interrupted");
+            return ESP_FAIL;
+        }
+        timeouts = 0;
+        received += n;
+    }
     body[received] = '\0';
 
     // Snapshot the fields that require a reboot to take effect (mDNS/WiFi
@@ -1060,6 +1077,8 @@ static esp_err_t update_check_post_handler(httpd_req_t *req)
             res.current, res.latest, res.available ? "true" : "false",
             (unsigned)res.size, ota_board_variant());
     }
+    // snprintf returns the would-be length — never send past the buffer
+    if (len >= (int)sizeof(json)) len = sizeof(json) - 1;
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json, len);
     return ESP_OK;
@@ -1235,6 +1254,9 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         g_config.watchdog_enabled ? 1 : 0, (unsigned)pipeline_watchdog_stall_secs(),
         batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
+
+    // snprintf returns the would-be length — never send past the buffer
+    if (len >= (int)sizeof(json)) len = sizeof(json) - 1;
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");

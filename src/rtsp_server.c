@@ -44,6 +44,11 @@ typedef struct {
     uint32_t timestamp;
     uint32_t ssrc;
     volatile bool playing;
+    // Serializes the client socket between the RTP sender task and the
+    // control-channel responses: in TCP-interleaved mode both write to the
+    // same fd, and a control response landing between an RTP frame's
+    // partial writes would corrupt the framing.
+    SemaphoreHandle_t tx_mtx;
 } rtp_session_t;
 
 // One slot per simultaneous client (e.g. BirdNET-Go + a VLC spot-check).
@@ -55,6 +60,7 @@ typedef struct {
     int           id;          // 1-based, used as the RTSP Session id
     int           client_fd;
     int           reader;      // audio_pipeline subscription, -1 when none
+    bool          setup_done;  // a SETUP has populated rtp; PLAY is valid
     rtp_session_t rtp;
     TaskHandle_t  rtp_task;
     // Given by rtp_sender_task right before it exits, so cleanup can wait
@@ -147,7 +153,10 @@ static bool rtp_send_packet(rtp_session_t *s, const uint8_t *payload, size_t len
         pkt[1] = 0;  // channel 0 = RTP
         pkt[2] = (uint8_t)(rtp_len >> 8);
         pkt[3] = (uint8_t)(rtp_len & 0xFF);
-        return send_all(s->tcp_fd, pkt, 4 + rtp_len);
+        xSemaphoreTake(s->tx_mtx, portMAX_DELAY);
+        bool ok = send_all(s->tcp_fd, pkt, 4 + rtp_len);
+        xSemaphoreGive(s->tx_mtx);
+        return ok;
     }
 
     // UDP is message-based (no partial-write/framing-desync risk); ordinary
@@ -184,6 +193,17 @@ static void rtp_sender_task(void *arg)
     vTaskDelete(NULL);
 }
 
+// Send a control-channel response, serialized against the RTP sender's
+// writes on the same socket (see rtp_session_t.tx_mtx). Returns false when
+// the send failed and the session should end.
+static bool ctrl_send(rtsp_client_slot_t *c, const char *data, size_t len)
+{
+    xSemaphoreTake(c->rtp.tx_mtx, portMAX_DELAY);
+    bool ok = send_all(c->client_fd, (const uint8_t *)data, len);
+    xSemaphoreGive(c->rtp.tx_mtx);
+    return ok;
+}
+
 // Stop this slot's sender task (waiting for it to actually exit) and drop
 // its pipeline subscription. Safe to call when nothing is playing.
 static void stop_streaming(rtsp_client_slot_t *c)
@@ -192,8 +212,10 @@ static void stop_streaming(rtsp_client_slot_t *c)
         c->rtp.playing = false;
         // Wait for the sender to actually exit before the fd can be closed
         // or reused — otherwise a still-running sender can write stray RTP
-        // bytes into the next client's control stream.
-        xSemaphoreTake(c->rtp_stopped, pdMS_TO_TICKS(500));
+        // bytes into the next client's control stream. Must exceed
+        // send_all()'s 1.5 s stall budget, or a sender blocked in its final
+        // send can outlive this wait and race the slot's next occupant.
+        xSemaphoreTake(c->rtp_stopped, pdMS_TO_TICKS(2000));
         c->rtp_task = NULL;
         atomic_fetch_sub(&s_streaming, 1);
     }
@@ -201,6 +223,8 @@ static void stop_streaming(rtsp_client_slot_t *c)
         audio_pipeline_unsubscribe(c->reader);
         c->reader = -1;
     }
+    // After a TEARDOWN the client must re-SETUP before another PLAY
+    c->setup_done = false;
     led_refresh();
 }
 
@@ -295,7 +319,8 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                     "CSeq: %d\r\n"
                     "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN\r\n\r\n",
                     cseq);
-                send(client_fd, resp, strlen(resp), 0);
+                if (!ctrl_send(c, resp, strlen(resp)))
+                    done = true;
 
             } else if (strncmp(pos, "DESCRIBE", 8) == 0) {
                 int sdp_len = build_sdp(sdp, sizeof(sdp), server_ip);
@@ -306,10 +331,26 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                     "Content-Type: application/sdp\r\n"
                     "Content-Length: %d\r\n\r\n",
                     cseq, server_ip, sdp_len);
-                send(client_fd, resp, strlen(resp), 0);
-                send(client_fd, sdp, sdp_len, 0);
+                if (!ctrl_send(c, resp, strlen(resp)) ||
+                    !ctrl_send(c, sdp, (size_t)sdp_len))
+                    done = true;
 
             } else if (strncmp(pos, "SETUP", 5) == 0) {
+                if (c->rtp_task != NULL) {
+                    // Transport can't be renegotiated mid-play: the sender
+                    // task is actively using the current session/socket.
+                    // A client that wants a new transport must TEARDOWN first.
+                    snprintf(resp, sizeof(resp),
+                        "RTSP/1.0 455 Method Not Valid in This State\r\n"
+                        "CSeq: %d\r\n\r\n", cseq);
+                    if (!ctrl_send(c, resp, strlen(resp)))
+                        done = true;
+                    *req_end = saved;
+                    pos = req_end;
+                    if (done) break;
+                    continue;
+                }
+
                 const char *transport = rtsp_get_header(pos, "Transport");
                 bool tcp = transport && strstr(transport, "TCP") != NULL;
 
@@ -326,7 +367,9 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                         "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n"
                         "Session: %d\r\n\r\n",
                         cseq, c->id);
-                    send(client_fd, resp, strlen(resp), 0);
+                    if (!ctrl_send(c, resp, strlen(resp)))
+                        done = true;
+                    c->setup_done = true;
                     ESP_LOGI(TAG, "[%d] SETUP: RTP → TCP interleaved", c->id);
                 } else {
                     uint16_t client_rtp_port = 5004;
@@ -352,21 +395,39 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                         "Transport: RTP/AVP;unicast;client_port=%d-%d;server_port=5004-5005\r\n"
                         "Session: %d\r\n\r\n",
                         cseq, client_rtp_port, client_rtp_port + 1, c->id);
-                    send(client_fd, resp, strlen(resp), 0);
+                    if (!ctrl_send(c, resp, strlen(resp)))
+                        done = true;
+                    c->setup_done = true;
                     ESP_LOGI(TAG, "[%d] SETUP: RTP → UDP %s:%d", c->id,
                              inet_ntoa(c->rtp.client_addr.sin_addr), client_rtp_port);
                 }
 
             } else if (strncmp(pos, "PLAY", 4) == 0) {
+                if (!c->setup_done) {
+                    // Without a SETUP the rtp session is unconfigured — a
+                    // sender started now would stream into a zeroed
+                    // address / fd -1 while burning a pipeline reader slot.
+                    snprintf(resp, sizeof(resp),
+                        "RTSP/1.0 455 Method Not Valid in This State\r\n"
+                        "CSeq: %d\r\n\r\n", cseq);
+                    if (!ctrl_send(c, resp, strlen(resp)))
+                        done = true;
+                    *req_end = saved;
+                    pos = req_end;
+                    if (done) break;
+                    continue;
+                }
                 if (c->rtp_task == NULL) {
                     c->reader = audio_pipeline_subscribe(true);
                     if (c->reader < 0) {
                         snprintf(resp, sizeof(resp),
                             "RTSP/1.0 453 Not Enough Bandwidth\r\n"
                             "CSeq: %d\r\n\r\n", cseq);
-                        send(client_fd, resp, strlen(resp), 0);
+                        if (!ctrl_send(c, resp, strlen(resp)))
+                            done = true;
                         *req_end = saved;
                         pos = req_end;
+                        if (done) break;
                         continue;
                     }
                     // Drain a possibly-stale give from a previous session
@@ -388,7 +449,8 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                     "RTP-Info: url=rtsp://%s/audio/trackID=0;seq=%u;rtptime=%u\r\n\r\n",
                     cseq, c->id, server_ip,
                     (unsigned)c->rtp.seq, (unsigned)c->rtp.timestamp);
-                send(client_fd, resp, strlen(resp), 0);
+                if (!ctrl_send(c, resp, strlen(resp)))
+                    done = true;
                 ESP_LOGI(TAG, "[%d] PLAY", c->id);
 
             } else if (strncmp(pos, "TEARDOWN", 8) == 0) {
@@ -398,7 +460,7 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                     "CSeq: %d\r\n"
                     "Session: %d\r\n\r\n",
                     cseq, c->id);
-                send(client_fd, resp, strlen(resp), 0);
+                ctrl_send(c, resp, strlen(resp));
                 ESP_LOGI(TAG, "[%d] TEARDOWN", c->id);
                 *req_end = saved;
                 pos = req_end;
@@ -409,11 +471,17 @@ static void handle_rtsp_client(rtsp_client_slot_t *c, const char *server_ip)
                 snprintf(resp, sizeof(resp),
                     "RTSP/1.0 405 Method Not Allowed\r\n"
                     "CSeq: %d\r\n\r\n", cseq);
-                send(client_fd, resp, strlen(resp), 0);
+                if (!ctrl_send(c, resp, strlen(resp)))
+                    done = true;
             }
 
             *req_end = saved;
             pos = req_end;
+            // A failed/short control send is session-fatal: on the TCP-
+            // interleaved transport it permanently desyncs the framing, and
+            // even over UDP a client hung waiting on a lost response is
+            // better served by a clean disconnect.
+            if (done) break;
         }
 
         // Slide any unprocessed bytes to the front of the buffer
@@ -484,6 +552,11 @@ static void rtsp_listener_task(void *arg)
             ESP_LOGE(TAG, "accept error: errno %d", errno);
             continue;
         }
+        // Re-read our own IP for this session's DESCRIBE/SDP: a runtime
+        // WiFi reconnect can (rarely) come back with a different DHCP
+        // address, which would leave the boot-time snapshot stale.
+        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK)
+            snprintf(s_server_ip, sizeof(s_server_ip), IPSTR, IP2STR(&ip_info.ip));
         // Disable Nagle algorithm so RTP frames are sent immediately,
         // and cap send() blocking time to avoid stalling the audio pipeline.
         int nodelay = 1;
@@ -495,10 +568,11 @@ static void rtsp_listener_task(void *arg)
         xSemaphoreTake(s_slots_mtx, portMAX_DELAY);
         for (int i = 0; i < RTSP_MAX_CLIENTS; i++) {
             if (!s_slots[i].in_use) {
-                s_slots[i].in_use    = true;
-                s_slots[i].client_fd = client_fd;
-                s_slots[i].reader    = -1;
-                s_slots[i].rtp_task  = NULL;
+                s_slots[i].in_use     = true;
+                s_slots[i].client_fd  = client_fd;
+                s_slots[i].reader     = -1;
+                s_slots[i].rtp_task   = NULL;
+                s_slots[i].setup_done = false;
                 slot = &s_slots[i];
                 break;
             }
@@ -545,7 +619,9 @@ esp_err_t rtsp_server_start(void)
         s_slots[i].reader       = -1;
         s_slots[i].rtp.udp_sock = -1;
         s_slots[i].rtp_stopped  = xSemaphoreCreateBinary();
-        if (s_slots[i].rtp_stopped == NULL) return ESP_ERR_NO_MEM;
+        s_slots[i].rtp.tx_mtx   = xSemaphoreCreateMutex();
+        if (s_slots[i].rtp_stopped == NULL || s_slots[i].rtp.tx_mtx == NULL)
+            return ESP_ERR_NO_MEM;
     }
 
     BaseType_t ok = xTaskCreatePinnedToCore(

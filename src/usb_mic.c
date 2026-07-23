@@ -20,7 +20,9 @@ typedef struct {
     uint8_t iface_num;
 } rx_connected_t;
 
-static uac_host_device_handle_t s_dev      = NULL;
+// volatile: written by the driver's disconnect callback task, read by the
+// audio reader task (see snapshot in usb_mic_read)
+static uac_host_device_handle_t volatile s_dev = NULL;
 static QueueHandle_t            s_connect_q = NULL;
 static audio_dsp_state_t        s_dsp;
 static uint8_t                  s_channels  = 1;
@@ -172,11 +174,13 @@ esp_err_t usb_mic_init(void)
         .callback         = device_event_cb,
         .callback_arg     = NULL,
     };
-    ret = uac_host_device_open(&dev_config, &s_dev);
+    uac_host_device_handle_t dev = NULL;
+    ret = uac_host_device_open(&dev_config, &dev);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "uac_host_device_open failed: %s", esp_err_to_name(ret));
         return ret;
     }
+    s_dev = dev;
 
     uac_host_dev_info_t dev_info;
     uac_host_get_device_info(s_dev, &dev_info);
@@ -227,11 +231,15 @@ esp_err_t usb_mic_init(void)
 
 size_t usb_mic_read(int16_t *buf, size_t count)
 {
-    if (!s_dev) return 0;
+    // Snapshot once: the disconnect callback nulls s_dev from another task
+    // at any moment, so re-reading the global after the check could hand
+    // the driver a stale handle mid-call.
+    uac_host_device_handle_t dev = s_dev;
+    if (!dev) return 0;
 
     if (s_channels == 1) {
         uint32_t bytes_read = 0;
-        esp_err_t ret = uac_host_device_read(s_dev, (uint8_t *)buf,
+        esp_err_t ret = uac_host_device_read(dev, (uint8_t *)buf,
                                              count * sizeof(int16_t),
                                              &bytes_read, pdMS_TO_TICKS(200));
         if (ret != ESP_OK) return 0;
@@ -246,7 +254,7 @@ size_t usb_mic_read(int16_t *buf, size_t count)
     size_t want = (count < RTP_SAMPLES_PER_PACKET) ? count : RTP_SAMPLES_PER_PACKET;
 
     uint32_t bytes_read = 0;
-    esp_err_t ret = uac_host_device_read(s_dev, (uint8_t *)raw,
+    esp_err_t ret = uac_host_device_read(dev, (uint8_t *)raw,
                                          want * 2 * sizeof(int16_t),
                                          &bytes_read, pdMS_TO_TICKS(200));
     if (ret != ESP_OK) return 0;
