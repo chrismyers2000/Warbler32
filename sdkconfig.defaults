@@ -41,6 +41,15 @@ CONFIG_COMPILER_WARNINGS_EXTRA=n
 # ---- Logging ----
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# ---- LWIP sockets ----
+# Default (10) is sized as if the web server were the only socket user —
+# esp_http_server's own default config (max_open_sockets=7, +3 reserved
+# internally) alone consumes the entire default budget, leaving nothing
+# for the RTSP listener/clients, mDNS, or the OTA HTTPS client. Raised to
+# fit all of them; web_server.c caps httpd's own share (max_open_sockets)
+# so it can't reclaim the room this makes for everything else.
+CONFIG_LWIP_MAX_SOCKETS=16
+
 # ---- USB Host (UAC microphone) ----
 # Default (256B) is too small for UAC mics whose configuration descriptor
 # covers multiple interfaces/alt settings; enumeration fails with

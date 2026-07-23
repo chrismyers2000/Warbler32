@@ -1305,6 +1305,14 @@ esp_err_t web_server_start(void)
     cfg.lru_purge_enable  = true;
     cfg.max_uri_handlers  = 16;
     cfg.stack_size        = 12288;  // TLS handshake runs in-handler for /update/check
+    // Default (7) + 3 reserved-for-httpd-internals == the entire global
+    // CONFIG_LWIP_MAX_SOCKETS budget, leaving nothing for the RTSP
+    // listener/clients, mDNS, or the OTA HTTPS client — under enough
+    // concurrent web traffic the whole device runs out of sockets and
+    // every other subsystem starts failing ("Could not reach GitHub",
+    // httpd itself refusing new connections). Capped here, with the
+    // budget raised in sdkconfig.defaults to fit everything comfortably.
+    cfg.max_open_sockets  = 4;
 
     httpd_handle_t server = NULL;
     esp_err_t ret = httpd_start(&server, &cfg);
