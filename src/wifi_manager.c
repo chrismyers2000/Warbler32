@@ -20,10 +20,15 @@ static const char *TAG = "wifi";
 #define WIFI_READY_BIT BIT0
 
 static EventGroupHandle_t s_wifi_event_group;
-static int  s_retry_count   = 0;
-static bool s_ap_mode       = false;
-static bool s_wifi_started  = false;
-static bool s_want_ap       = false;
+static int  s_retry_count    = 0;
+static bool s_ap_mode        = false;
+static bool s_wifi_started   = false;
+static bool s_want_ap        = false;
+// Set on the first IP_EVENT_STA_GOT_IP. Distinguishes the initial boot-time
+// connection attempt (bounded retries, falls back to the setup AP) from a
+// later runtime drop (retries forever — falling back to the setup AP would
+// tear down STA and kill an already-running RTSP stream for no good reason).
+static bool s_ever_connected = false;
 
 // Manual BOOT-button-double-press rotation. Includes channel 1, unlike the
 // automatic scan's candidates — the auto-picker avoids it based on evidence
@@ -168,7 +173,14 @@ static void event_handler(void *arg, esp_event_base_t base,
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         if (!s_want_ap) esp_wifi_connect();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry_count < WIFI_MAX_RETRIES) {
+        if (s_ever_connected) {
+            // Runtime drop after a successful boot connection — keep
+            // retrying indefinitely rather than falling back to the setup
+            // AP, which would tear down STA and kill the running stream.
+            ESP_LOGW(TAG, "WiFi dropped, reconnecting...");
+            status_led_set(LED_CONNECTING);
+            esp_wifi_connect();
+        } else if (s_retry_count < WIFI_MAX_RETRIES) {
             esp_wifi_connect();
             s_retry_count++;
             ESP_LOGI(TAG, "retrying WiFi (%d/%d)...", s_retry_count, WIFI_MAX_RETRIES);
@@ -181,6 +193,7 @@ static void event_handler(void *arg, esp_event_base_t base,
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         ESP_LOGI(TAG, "connected — IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count = 0;
+        s_ever_connected = true;
         status_led_set(LED_CONNECTED);
 
         // WiFi modem-sleep power save (IDF default: WIFI_PS_MIN_MODEM) puts
@@ -221,11 +234,12 @@ esp_err_t wifi_manager_start(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    esp_event_handler_instance_t inst_any, inst_got_ip;
+    // Left registered for the life of the device (never unregistered below)
+    // so a post-boot disconnect is still handled — see WIFI_EVENT_STA_DISCONNECTED.
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, &inst_any));
+        WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
-        IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, &inst_got_ip));
+        IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler, NULL, NULL));
 
     status_led_set(LED_CONNECTING);
 
@@ -257,9 +271,10 @@ esp_err_t wifi_manager_start(void)
         pdFALSE, pdFALSE,
         portMAX_DELAY);
 
-    esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, inst_got_ip);
-    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, inst_any);
-    vEventGroupDelete(s_wifi_event_group);
+    // s_wifi_event_group is intentionally not deleted here: IP_EVENT_STA_GOT_IP
+    // sets WIFI_READY_BIT on every reconnect, not just the first one, so the
+    // handle must stay valid for the device's lifetime. The extra SetBits
+    // calls after boot are harmless no-ops since nothing waits on it anymore.
 
     return ESP_OK;
 }
