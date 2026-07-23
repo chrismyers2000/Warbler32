@@ -293,6 +293,14 @@ static const char *s_html =
     "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-advanced\">"
+    "<div class=\"card\"><h2>Device</h2>"
+    "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Reboots the "
+    "device. Settings are kept; any active stream is interrupted.</p>"
+    "<form method=\"POST\" action=\"/reboot\" onsubmit=\"return confirm('Reboot the device? "
+    "Any active stream will be interrupted.');\">"
+    "<button type=\"submit\" style=\"background:#374151\">Reboot</button>"
+    "</form>"
+    "</div>"
     "<div class=\"card\"><h2>Danger Zone</h2>"
     "<p style=\"font-size:12px;color:#6b7280;margin:0 0 10px\">Erases saved WiFi and audio "
     "settings and reboots into setup mode (broadcasting \"" WIFI_AP_SSID "\").</p>"
@@ -970,6 +978,28 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// POST /reboot — plain reboot, settings untouched
+// ---------------------------------------------------------------------------
+static esp_err_t reboot_post_handler(httpd_req_t *req)
+{
+    static const char resp[] =
+        "<!DOCTYPE html><html><head>"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+        "<title>Warbler32</title></head>"
+        "<body style=\"font-family:system-ui;background:#111827;color:#e5e7eb;"
+        "text-align:center;padding:60px 16px\">"
+        "<h2 style=\"color:#34d399\">Rebooting&hellip;</h2>"
+        "<p>Settings are unchanged. The device will be back shortly.</p>"
+        "</body></html>";
+
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, resp, strlen(resp));
+
+    xTaskCreate(reboot_task, "reboot", 1024, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // POST /reset — wipe saved config, reboot into setup mode
 // ---------------------------------------------------------------------------
 static esp_err_t reset_post_handler(httpd_req_t *req)
@@ -1290,6 +1320,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_level = {
         .uri = "/level", .method = HTTP_GET, .handler = level_get_handler,
     };
+    static const httpd_uri_t post_reboot = {
+        .uri = "/reboot", .method = HTTP_POST, .handler = reboot_post_handler,
+    };
     static const httpd_uri_t post_reset = {
         .uri = "/reset", .method = HTTP_POST, .handler = reset_post_handler,
     };
@@ -1314,6 +1347,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
+    httpd_register_uri_handler(server, &post_reboot);
     httpd_register_uri_handler(server, &post_reset);
     httpd_register_uri_handler(server, &post_ota);
     httpd_register_uri_handler(server, &get_status);
