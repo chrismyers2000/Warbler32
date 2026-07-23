@@ -990,6 +990,8 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
         "text-align:center;padding:60px 16px\">"
         "<h2 style=\"color:#34d399\">Rebooting&hellip;</h2>"
         "<p>Settings are unchanged. The device will be back shortly.</p>"
+        "<p style=\"color:#6b7280;font-size:13px\">Page will reload in 8 seconds.</p>"
+        "<script>setTimeout(()=>{location.href='/'},8000)</script>"
         "</body></html>";
 
     httpd_resp_set_type(req, "text/html");
