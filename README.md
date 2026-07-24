@@ -51,21 +51,23 @@ shown by default; click **Windows** or **macOS** to expand those instead.
    > developed and tested on Raspberry Pi OS Trixie**, so if that's what
    > you're running, this is the best-tested path.
 
-   **Ubuntu / Debian:** (no Raspberry Pi repo here, so add Microsoft's
-   official VS Code apt repo instead — no snap involved)
+   **Ubuntu:**
    ```bash
-   sudo apt update && sudo apt install -y wget gnupg
-   sudo mkdir -p /etc/apt/keyrings
-   wget -qO- https://packages.microsoft.com/keys/microsoft.gpg | gpg --dearmor \
-     | sudo tee /etc/apt/keyrings/packages.microsoft.gpg > /dev/null
-   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
-     | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
-   sudo apt update && sudo apt install -y code
+   sudo snap install code --classic
    code --install-extension platformio.platformio-ide
    ```
-   > On Ubuntu specifically, `snap install code --classic` is a shorter
-   > alternative to all of the above (snapd is preinstalled there) — use
-   > whichever you prefer, they install the same VS Code.
+
+   **Debian:** (plain Debian doesn't include Raspberry Pi OS's VS Code
+   package or Ubuntu's preinstalled `snap` command, so install `snapd` first)
+   ```bash
+   sudo apt update && sudo apt install -y snapd
+   sudo snap install core
+   sudo snap install code --classic
+   code --install-extension platformio.platformio-ide
+   ```
+   > If `snap install` doesn't work right after installing `snapd`, log out
+   > and back in (or reboot) first — it needs a fresh shell session to pick
+   > up its PATH changes.
 3. **Open the project** — this launches VS Code with the folder already open,
    no File menu needed:
    ```bash
