@@ -1,3 +1,5 @@
+<img src="misc/images/Logo.png" alt="Warbler32 logo" width="160">
+
 # Warbler32
 
 Warbler32 is a device for streaming RTSP audio to a bird identification server such as [BirdNET-Go](https://github.com/tphakala/birdnet-go). This is a low power device that can be solar and/or battery powered and placed further away (within WiFi range) from your house than you would if running the microphone on the BirdNET server itself (usually a raspberry pi). As an example, I'm running BirdNET-Go on a proxmox server and have 3 audio streams running to it at the same time. These 3 devices are located  about 600ft from each-other on my property so I can capture a wider range of birds.
