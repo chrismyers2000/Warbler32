@@ -54,8 +54,21 @@ fetch_file() {
     fi
 }
 
+# esptool 5+ renamed its CLI from `esptool.py` to plain `esptool`, keeping
+# the old name only as a deprecated alias. Prefer the new name whenever
+# it's present, but still work with an older esptool.py-only install
+# (e.g. one already on PATH from somewhere else) that doesn't have it.
+find_esptool() {
+    if command -v esptool >/dev/null 2>&1; then
+        echo esptool
+    elif command -v esptool.py >/dev/null 2>&1; then
+        echo esptool.py
+    fi
+}
+
 echo "==> Checking for esptool..."
-if ! command -v esptool.py >/dev/null 2>&1; then
+ESPTOOL="$(find_esptool)"
+if [ -z "$ESPTOOL" ]; then
     if ! python3 -m pip --version >/dev/null 2>&1; then
         # Raspberry Pi OS ships python3-pip out of the box; plain
         # Debian/Ubuntu (especially server/minimal installs) often don't.
@@ -85,16 +98,17 @@ if ! command -v esptool.py >/dev/null 2>&1; then
         fi
     }
     export PATH="$HOME/.local/bin:$PATH"
+    ESPTOOL="$(find_esptool)"
 fi
-if ! command -v esptool.py >/dev/null 2>&1; then
-    echo "error: esptool.py still not found on PATH after installing it." >&2
+if [ -z "$ESPTOOL" ]; then
+    echo "error: esptool still not found on PATH after installing it." >&2
     echo "Open a new terminal and try again, or run this manually:" >&2
     echo "  python3 -m pip install --user esptool" >&2
     exit 1
 fi
 
 echo "==> Detecting connected board (this reads its PSRAM size to pick the right build)..."
-DETECT_OUT="$(esptool.py --chip esp32s3 chip_id 2>&1)" || {
+DETECT_OUT="$("$ESPTOOL" --chip esp32s3 chip_id 2>&1)" || {
     echo "$DETECT_OUT" >&2
     echo "" >&2
     echo "error: couldn't talk to a board." >&2
@@ -148,7 +162,7 @@ case "$REPLY" in
 esac
 
 echo "==> Flashing..."
-esptool.py --chip esp32s3 write_flash 0x0 "$TMP/$ASSET"
+"$ESPTOOL" --chip esp32s3 write_flash 0x0 "$TMP/$ASSET"
 
 echo ""
 echo "Done! Connect to the device's own \"Warbler32-Setup\" WiFi network"
