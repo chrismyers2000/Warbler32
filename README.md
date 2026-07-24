@@ -5,8 +5,8 @@ Warbler32 is a device for streaming RTSP audio to a bird identification server s
 Supports these microphone options:
 - **INMP441** — a cheap I2S digital microphone breakout, wired directly to the board.
 - **SPH0645** — Adafruit's I2S MEMS microphone breakout, same wiring as the INMP441
-  (select the model on the config page).
-- **USB microphone (Cleaner Audio)** — any standard USB Audio Class (UAC 1.0) mic/headset, plugged
+  (This one is tested to have much cleaner audio than the INMP441).
+- **USB microphone (Cleanest audio if using a good Mic)** — most standard USB Audio Class (UAC 1.0) mic/headset, plugged
   into the board's native USB port.
 
 No programming experience is required to use this — just follow the steps below.
