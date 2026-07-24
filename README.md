@@ -8,30 +8,40 @@
 Warbler32 is a device for streaming RTSP audio to a bird identification server such as [BirdNET-Go](https://github.com/tphakala/birdnet-go). This is a low power device that can be solar and/or battery powered and placed further away (within WiFi range) from your house than you would if running the microphone on the BirdNET server itself (usually a raspberry pi). As an example, I'm running BirdNET-Go on a proxmox server and have 3 audio streams running to it at the same time. These 3 devices are located  about 600ft from each-other on my property so I can capture a wider range of birds.
 
 Supports these microphone options:
+- **USB microphone (Recommended: Cleanest audio if using a good Mic)** — most standard USB Audio Class (UAC 1.0) mic/headset, plugged
+  into the board's native USB port.
 - **INMP441** — a cheap I2S digital microphone breakout, wired directly to the board.
 - **SPH0645** — Adafruit's I2S MEMS microphone breakout, same wiring as the INMP441
   (This one is tested to have much cleaner audio than the INMP441).
-- **USB microphone (Cleanest audio if using a good Mic)** — most standard USB Audio Class (UAC 1.0) mic/headset, plugged
-  into the board's native USB port.
 
-No programming experience is required to use this — just follow the steps below.
+<br />
+<br />
+
 
 ## What you'll need
 
-- An **ESP32-S3-DevKitC-1** board with PSRAM — N8R2, N16R8, or similar
-  variants with two USB ports (native USB + UART) all work. The exact
-  flash/PSRAM configuration is auto-detected when you flash it, so you don't
-  need to figure out which one you have.
-- A USB cable to connect it to your computer
-- Either an **INMP441** or **SPH0645** microphone breakout, or a **UAC-class USB microphone**
+- An [ESP32-S3-DevKitC-1](https://a.co/d/0iorlBZx) board with PSRAM — N8R2, N16R8, or similar
+  variants with two USB ports (native USB + UART) all work.
+  - If you buy the cheaper versions with external antenna option, be aware that most of them require you to move a 0 ohm resistor in the antenna path to actually use       the external antenna port. This is somewhat difficult to do without a microscope.
+  - The [Lonely Binary ESP32-S3 Devkit](https://a.co/d/0dvCV5Xt) is ready to go and comes with an antenna and adapter. 
+- A USB cable for flashing firmware
+- Either an **INMP441** or **SPH0645** microphone, or a **UAC-class USB microphone**
+  In my testing, the best results came from using USB Microphones. [This One Here](https://a.co/d/0iRE7ARC) has really good results with very low noise.
+
+- [USB-C to USB-A OTG cable](https://a.co/d/07mJU50X) (If using a USB mic)
 - (Optional) An **INA219** breakout board, if you want battery-voltage
-  monitoring on the Status card — most boards default to I2C address
-  `0x40`, which this firmware expects.
-- A computer running Windows, macOS, or Linux
+  monitoring.
+- A computer running Windows, macOS, or Linux (Works on Raspberry Pi)
+    ###### *NOTE: I am not affiliated with any seller or items in the links, these are simply the exact items I have personally tested*
+<br />
+<br />
 
 ## Flashing the firmware
 
-## [Click Here to use the WEB FLASHER](https://chrismyers2000.github.io/Warbler32/) Easiest method for all operating systems
+## [Click Here to use the WEB FLASHER](https://chrismyers2000.github.io/Warbler32/) - - Easiest method for all operating systems
+
+<br />
+<br />
 
 ### ESPtool (for Linux)
 The next best way to get the firmware onto the board — Just one command:
@@ -91,15 +101,15 @@ firmware will tell you at boot (over serial) if it's wrong.
 
 </details>
 
-## Building from source (VS Code + PlatformIO)
+### Building from source (VS Code + PlatformIO)
 
 Only needed if you want to modify the firmware yourself, or prefer building
 locally instead of using the released `.bin` above. This project uses
 **PlatformIO** (via **VS Code**, a free code editor) to build and flash the
-firmware. Pick your operating system below — Linux is shown by default;
-click **Windows** or **macOS** to expand those instead.
+firmware. Pick your operating system below.
 
-### Linux
+<details>
+<summary><strong>Linux</strong></summary>
 
 1. **Get the code:**
    ```bash
@@ -155,6 +165,8 @@ click **Windows** or **macOS** to expand those instead.
    sudo usermod -aG dialout $USER
    ```
    Still nothing? Try a different USB cable (some are power-only) or port.
+
+</details>
 
 <details>
 <summary><strong>Windows</strong></summary>
@@ -217,6 +229,34 @@ click **Windows** or **macOS** to expand those instead.
    different USB cable (some are power-only) or port.
 
 </details>
+<br /> 
+<br /> 
+
+## First-time WiFi setup
+
+The device ships with no WiFi configured. On first boot (and any time it can't
+join a saved network) it broadcasts its own setup network:
+
+1. On your phone or laptop, connect to the WiFi network
+  ```
+ssid: Warbler32-Setup
+password: warbler32
+  ```
+   
+3. Browse to **`http://192.168.4.1/`**.
+4. Enter your home WiFi's SSID and password, then **Save & Reboot**.
+
+The status LED blinks red (slowly) while in setup mode.
+
+> The setup AP automatically picks a quiet 2.4GHz channel (6 or 11) by
+> scanning for nearby networks first. If devices still won't join it reliably,
+> double-tap the board's BOOT button (two quick presses) to manually cycle the
+> AP to the next channel in `1 → 6 → 11 → ...` — the LED flashes white to
+> confirm. Only does anything while the device is broadcasting the setup AP. 
+
+
+<br />
+<br />
 
 ## Wiring (I2S mic only — skip if using a USB microphone)
 
@@ -256,6 +296,8 @@ Both mics need different I2S bus timing internally, so after setup pick your
 model under **Audio → I2S Mic Model** on the config page (default is
 INMP441). For the SPH0645, also enable the high-pass filter (e.g. 100 Hz) —
 that mic has a built-in DC offset the filter removes.
+<br />
+<br />
 
 ## Wiring (USB microphone only — skip if using an I2S mic)
 
@@ -271,6 +313,8 @@ adaptive-clock audio endpoint isn't well handled by the ESP32 USB Audio
 driver used here. It works cleanly on other hosts (e.g. a Raspberry Pi);
 on this board, treat it as untested/may-not-work rather than a supported
 option.
+<br />
+<br />
 
 ## Wiring (INA219 battery monitor — optional, skip if not using one)
 
@@ -286,24 +330,8 @@ typically directly across the battery terminals, before any regulator. The
 INA219 measures up to 26V, plenty for common 1S-4S Li-ion/LiPo or LiFePO4
 packs. If no INA219 is detected on the bus, the Status card just shows "–"
 for Battery and nothing else in the firmware is affected.
-
-## First-time WiFi setup
-
-The device ships with no WiFi configured. On first boot (and any time it can't
-join a saved network) it broadcasts its own setup network:
-
-1. On your phone or laptop, connect to the WiFi network **`Warbler32-Setup`**
-   (password: **`warbler32`**).
-2. Browse to **`http://192.168.4.1/`**.
-3. Enter your home WiFi's SSID and password, then **Save & Reboot**.
-
-The status LED blinks red (slowly) while in setup mode.
-
-The setup AP automatically picks a quiet 2.4GHz channel (6 or 11) by
-scanning for nearby networks first. If devices still won't join it reliably,
-double-tap the board's BOOT button (two quick presses) to manually cycle the
-AP to the next channel in `1 → 6 → 11 → ...` — the LED flashes white to
-confirm. Only does anything while the device is broadcasting the setup AP.
+<br />
+<br />
 
 ## Using it
 
@@ -365,6 +393,8 @@ glance), turning red with a **LOW** label once voltage drops to or below
 the configured Low threshold. No INA219 wired up? The card just shows "–"
 and nothing else in the firmware is affected. Battery settings apply
 instantly, no reboot needed.
+<br />
+<br />
 
 ## Updating the firmware over WiFi
 
@@ -394,6 +424,8 @@ scripts/release.sh 1.0.0
 Tags `v1.0.0`, builds both PSRAM variants, and publishes
 `warbler32-quad.bin` + `warbler32-oct.bin` as GitHub release assets —
 which is exactly what deployed devices look for.
+<br />
+<br />
 
 ## Factory reset
 
