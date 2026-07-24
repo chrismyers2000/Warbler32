@@ -6,12 +6,17 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash
 #
+# No curl? (not guaranteed on a fresh minimal/server install, unlike wget):
+#
+#   wget -qO- https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash
+#
 # or, if you already have the repo cloned:
 #
 #   bash scripts/install.sh
 #
-# Requires Python 3 + pip (to install esptool if it isn't already present)
-# and the board connected via its "UART" USB port.
+# Requires Python 3 + pip (to install esptool if it isn't already present;
+# this script installs pip itself too, via apt, if it's missing) and the
+# board connected via its "UART" USB port.
 #
 # WARNING: this wipes any saved settings on the board (WiFi, audio config —
 # everything), the same as a factory reset — the factory image spans the
@@ -21,6 +26,33 @@
 set -euo pipefail
 
 REPO="chrismyers2000/Warbler32"
+
+# curl is only Debian "optional" priority — not guaranteed on a fresh
+# minimal/server install, unlike wget ("standard" priority). Since this
+# script itself is normally fetched with curl, don't also assume curl is
+# what's available for its own HTTP calls further down.
+fetch_stdout() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$1"
+    else
+        echo "error: need curl or wget, and neither is installed." >&2
+        echo "  sudo apt install -y curl" >&2
+        exit 1
+    fi
+}
+fetch_file() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$2" "$1"
+    else
+        echo "error: need curl or wget, and neither is installed." >&2
+        echo "  sudo apt install -y curl" >&2
+        exit 1
+    fi
+}
 
 echo "==> Checking for esptool..."
 if ! command -v esptool.py >/dev/null 2>&1; then
@@ -87,7 +119,7 @@ echo "==> Detected variant: $VARIANT"
 
 ASSET="warbler32-${VARIANT}-factory.bin"
 echo "==> Looking up the latest release's $ASSET..."
-ASSET_URL="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+ASSET_URL="$(fetch_stdout "https://api.github.com/repos/${REPO}/releases/latest" \
     | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -104,7 +136,7 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 echo "==> Downloading $ASSET..."
-curl -fL -o "$TMP/$ASSET" "$ASSET_URL"
+fetch_file "$ASSET_URL" "$TMP/$ASSET"
 
 echo ""
 echo "About to flash $ASSET — this ERASES any saved WiFi/audio settings"

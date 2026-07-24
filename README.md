@@ -34,6 +34,10 @@ your board is the Quad or Octal PSRAM variant. One command:
 curl -fsSL https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash
 ```
 
+> No `curl`? (it isn't installed by default on every system, e.g. some
+> minimal/server installs) — use `wget` instead:
+> `wget -qO- https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash`
+
 This detects your connected board's PSRAM variant automatically, downloads
 the matching `warbler32-<variant>-factory.bin` from the
 [latest release](https://github.com/chrismyers2000/Warbler32/releases/latest),
@@ -57,7 +61,7 @@ plain downloadable assets — grab the one matching your board and flash it
 yourself:
 
 ```bash
-pip install esptool
+python3 -m pip install --user esptool
 esptool.py --chip esp32s3 write_flash 0x0 warbler32-quad-factory.bin
 ```
 
@@ -65,6 +69,13 @@ Use the `oct` variant instead of `quad` if you have an N16R8 (or other
 Octal-PSRAM) board — see [What you'll need](#what-youll-need) above; if
 you're not sure which you have, `quad` is the safer default and the
 firmware will tell you at boot (over serial) if it's wrong.
+
+> On Debian/Ubuntu 12+/23.04+ (including Raspberry Pi OS Trixie), a plain
+> `pip install` is blocked by default (PEP 668). If you see an
+> "externally-managed-environment" error, add `--break-system-packages`:
+> `python3 -m pip install --user --break-system-packages esptool`. If
+> `esptool.py` isn't found right after installing it, open a new terminal
+> (it needs a fresh shell to pick up the updated PATH).
 
 </details>
 
