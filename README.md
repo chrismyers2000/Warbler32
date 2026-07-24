@@ -149,6 +149,37 @@ shown by default; click **Windows** or **macOS** to expand those instead.
 
 </details>
 
+## Flashing without VS Code (esptool)
+
+Don't want to install VS Code/PlatformIO at all? Every
+[release](https://github.com/chrismyers2000/Warbler32/releases/latest)
+publishes a `warbler32-<variant>-factory.bin` — a single file with
+everything the board needs (bootloader, partition table, and firmware)
+already combined, ready to write starting at flash offset `0x0` with just
+[esptool](https://github.com/espressif/esptool):
+
+```bash
+pip install esptool
+esptool.py --chip esp32s3 write_flash 0x0 warbler32-quad-factory.bin
+```
+
+Use the `oct` variant instead of `quad` if you have an N16R8 (or other
+Octal-PSRAM) board — see [What you'll need](#what-youll-need) above; if
+you're not sure which you have, `quad` is the safer default and the
+firmware will tell you at boot (over serial) if it's wrong.
+
+> **This wipes any saved settings** (WiFi, audio config — everything),
+> same as a factory reset, because the combined image spans the whole
+> region of flash where settings are stored. Perfect for a brand-new board;
+> **don't** point this at an already-configured device unless you want to
+> reconfigure it from scratch. After flashing, connect to the device's own
+> `Warbler32-Setup` WiFi network and browse to `192.168.4.1` — see
+> [First-time WiFi setup](#first-time-wifi-setup) below.
+
+A browser-based flasher (no `pip install` either — just a webpage) is
+planned for the future; for now, `esptool` is the simplest cable-only,
+IDE-free option.
+
 ## Wiring (I2S mic only — skip if using a USB microphone)
 
 ### INMP441

@@ -279,7 +279,7 @@ esp_err_t ota_github_check(ota_check_result_t *out, const char **err_msg)
     strlcpy(out->latest, s_latest_tag, sizeof(out->latest));
 
     char want[48];
-    snprintf(want, sizeof(want), "warbler32-%s.bin", ota_board_variant());
+    snprintf(want, sizeof(want), "warbler32-%s-ota.bin", ota_board_variant());
 
     s_asset_url[0] = '\0';
     s_asset_size = 0;
