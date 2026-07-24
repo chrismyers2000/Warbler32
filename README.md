@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="misc/images/Logo-transparent2.png" alt="Warbler32 logo" width="300">
+  <img src="misc/images/Logo-transparent2.png" alt="Warbler32 logo" width="600">
 </p>
 
 
