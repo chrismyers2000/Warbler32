@@ -37,18 +37,37 @@ shown by default; click **Windows** or **macOS** to expand those instead.
    git clone https://github.com/chrismyers2000/Warbler32.git
    cd Warbler32
    ```
-2. **Install VS Code and the PlatformIO extension** — two commands, no
-   downloading an installer or clicking through menus (needs
-   [snap](https://snapcraft.io/), which comes preinstalled on Ubuntu and
-   most Ubuntu-based distros; see the note below if yours doesn't have it):
+2. **Install VS Code and the PlatformIO extension** — a couple of commands,
+   no downloading an installer or clicking through menus. The exact commands
+   depend on your distro:
+
+   **Raspberry Pi OS:**
+   ```bash
+   sudo apt update && sudo apt install -y code
+   code --install-extension platformio.platformio-ide
+   ```
+   > Raspberry Pi OS's own apt repo already includes VS Code, so this is
+   > all it takes — no snap or extra setup needed. **This project is
+   > developed and tested on Raspberry Pi OS Trixie**, so if that's what
+   > you're running, this is the best-tested path.
+
+   **Ubuntu:**
    ```bash
    sudo snap install code --classic
    code --install-extension platformio.platformio-ide
    ```
-   > No `snap` on your distro? Install VS Code however your distro
-   > recommends instead (e.g. its own package manager) — see
-   > [code.visualstudio.com/docs/setup/linux](https://code.visualstudio.com/docs/setup/linux)
-   > — then run just the second command above to add the PlatformIO extension.
+
+   **Debian:** (plain Debian doesn't include Raspberry Pi OS's VS Code
+   package or Ubuntu's preinstalled `snap` command, so install `snapd` first)
+   ```bash
+   sudo apt update && sudo apt install -y snapd
+   sudo snap install core
+   sudo snap install code --classic
+   code --install-extension platformio.platformio-ide
+   ```
+   > If `snap install` doesn't work right after installing `snapd`, log out
+   > and back in (or reboot) first — it needs a fresh shell session to pick
+   > up its PATH changes.
 3. **Open the project** — this launches VS Code with the folder already open,
    no File menu needed:
    ```bash
