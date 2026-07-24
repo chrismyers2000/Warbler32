@@ -37,24 +37,30 @@ shown by default; click **Windows** or **macOS** to expand those instead.
    git clone https://github.com/chrismyers2000/Warbler32.git
    cd Warbler32
    ```
-2. **Install the tools:**
-   1. Install [Visual Studio Code](https://code.visualstudio.com/docs/setup/linux)
-      for your distro (or `snap install code --classic` on distros that support
-      snaps).
-   2. Open VS Code, click the **Extensions** icon in the left sidebar (or press
-      `Ctrl+Shift+X`), search for **"PlatformIO IDE"**, and click **Install**.
-   3. Wait for the install to finish — this can take a few minutes. Let VS Code
-      reload/restart if it asks to.
-3. **Open the project:** **File → Open Folder...** and select the `Warbler32`
-   folder (the one containing `platformio.ini`). Give PlatformIO a minute the
-   first time — it downloads the ESP32-S3 toolchain in the background (progress
-   shows in the bottom status bar).
+2. **Install VS Code and the PlatformIO extension** — two commands, no
+   downloading an installer or clicking through menus (needs
+   [snap](https://snapcraft.io/), which comes preinstalled on Ubuntu and
+   most Ubuntu-based distros; see the note below if yours doesn't have it):
+   ```bash
+   sudo snap install code --classic
+   code --install-extension platformio.platformio-ide
+   ```
+   > No `snap` on your distro? Install VS Code however your distro
+   > recommends instead (e.g. its own package manager) — see
+   > [code.visualstudio.com/docs/setup/linux](https://code.visualstudio.com/docs/setup/linux)
+   > — then run just the second command above to add the PlatformIO extension.
+3. **Open the project** — this launches VS Code with the folder already open,
+   no File menu needed:
+   ```bash
+   code .
+   ```
+   Give PlatformIO a minute the first time — it downloads the ESP32-S3
+   toolchain in the background (progress shows in the bottom status bar).
 4. **Connect and flash:** plug the board into your computer via the port
    labeled **"UART"** (not "USB" — that one's only used later, for a USB
    microphone), click the PlatformIO alien-head icon in the sidebar, then under
-   **PROJECT TASKS → esp32s3 → General** click **Upload**. (Or from a terminal
-   in the project folder: `pio run -t upload`.) This takes a minute or two the
-   first time; you'll see `[SUCCESS]` when it's done.
+   **PROJECT TASKS → esp32s3 → General** click **Upload**. This takes a minute
+   or two the first time; you'll see `[SUCCESS]` when it's done.
 5. **If the board isn't found:** you likely need permission on the serial
    port — add your user to the `dialout` group and log out/back in:
    ```bash
