@@ -24,11 +24,12 @@ No programming experience is required to use this — just follow the steps belo
   `0x40`, which this firmware expects.
 - A computer running Windows, macOS, or Linux
 
-## Flashing the firmware (recommended: esptool)
+## Flashing the firmware
 
-The simplest way to get the firmware onto the board — no VS Code, no
-PlatformIO, no cloning the repo, and you don't even need to know whether
-your board is the Quad or Octal PSRAM variant. One command:
+## [Click Here to use the WEB FLASHER](https://chrismyers2000.github.io/Warbler32/) Easiest method for all operating systems
+
+### ESPtool (for Linux)
+The next best way to get the firmware onto the board — Just one command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash
