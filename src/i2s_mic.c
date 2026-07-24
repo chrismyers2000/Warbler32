@@ -14,6 +14,12 @@ static const char *TAG = "i2s_mic";
 static i2s_chan_handle_t s_rx_chan = NULL;
 static audio_dsp_state_t s_dsp;
 static atomic_uint       s_dma_overflows = 0;
+// Which of the two duplicated slots i2s_channel_read() returns per frame
+// (see the comment in i2s_mic_read()) actually carries mic data. Empirically
+// verified via raw DMA dump: Philips format (bit_shift=true, INMP441) puts
+// it in the second slot; MSB format (bit_shift=false, SPH0645) puts it in
+// the first — the two slot configs differ in more than just bit timing.
+static size_t s_data_slot = 1;
 
 static bool IRAM_ATTR on_recv_q_ovf(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
 {
@@ -39,6 +45,7 @@ esp_err_t i2s_mic_init(void)
     // BCLK early — which lines up with the MSB (left-justified) slot format
     // instead. Same pins, same wiring (L/R / SEL to GND) for both.
     bool sph = g_config.mic_model == MIC_MODEL_SPH0645;
+    s_data_slot = sph ? 0 : 1;
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(g_config.sample_rate),
         .slot_cfg = sph ? (i2s_std_slot_config_t)
@@ -108,7 +115,7 @@ size_t i2s_mic_read(int16_t *buf, size_t count)
 
         size_t raw_samples = bytes_read / sizeof(int32_t);
         for (size_t i = 0; i < raw_samples; i += 2) {
-            buf[out_idx++] = (int16_t)(raw[i + 1] >> g_config.gain_shift);
+            buf[out_idx++] = (int16_t)(raw[i + s_data_slot] >> g_config.gain_shift);
         }
         to_read -= raw_samples / 2;
     }
