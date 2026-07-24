@@ -28,6 +28,12 @@
 # The tag is created BEFORE building so the firmware's embedded version
 # (git describe) equals the tag name — that's what devices compare against.
 #
+# Also updates docs/ (the browser-based web flasher, served over GitHub
+# Pages from master:/docs) with this release's factory images and version,
+# as a separate untagged commit after the GitHub release is published. Kept
+# separate from the tag-then-build flow above on purpose: the git tag
+# identifies the firmware source commit, not the website.
+#
 # notes_file: path to a short human-readable summary of what changed, used
 # as the GitHub release body. If omitted, falls back to GitHub's
 # auto-generated commit-list notes.
@@ -103,3 +109,27 @@ fi
 
 echo ""
 echo "released $TAG — devices will see it on their next 'Check for Updates'"
+
+echo ""
+echo "=== updating web flasher (docs/) ==="
+cp "$OUT/warbler32-quad-factory.bin" docs/firmware/warbler32-quad-factory.bin
+cp "$OUT/warbler32-oct-factory.bin"  docs/firmware/warbler32-oct-factory.bin
+python3 -c "
+import json
+for variant in ('quad', 'oct'):
+    path = f'docs/manifest-{variant}.json'
+    with open(path) as f:
+        m = json.load(f)
+    m['version'] = '$VERSION'
+    with open(path, 'w') as f:
+        json.dump(m, f, indent=2)
+        f.write('\n')
+"
+if [ -n "$(git status --porcelain docs/)" ]; then
+    git add docs/
+    git commit -m "Update web flasher to $TAG"
+    git push origin master
+    echo "docs/ updated and pushed"
+else
+    echo "docs/ already up to date, nothing to commit"
+fi

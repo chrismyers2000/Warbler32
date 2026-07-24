@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Warbler32 — Flash</title>
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+*{box-sizing:border-box}
+body{font-family:system-ui,sans-serif;background:#111827;color:#e5e7eb;margin:0;padding:16px;max-width:560px;margin-left:auto;margin-right:auto}
+h1{color:#60a5fa;margin:24px 0 4px}
+.sub{color:#6b7280;font-size:13px;margin:0 0 20px}
+.card{background:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin:0 0 12px}
+label{font-size:13px;color:#9ca3af;display:block;margin-bottom:4px}
+select{width:100%;background:#374151;border:1px solid #4b5563;
+color:#f3f4f6;padding:8px 10px;border-radius:6px;font-size:14px;margin-bottom:4px}
+.hint{color:#6b7280;font-size:12px;margin:4px 0 16px}
+.warn{background:#3f2d12;border:1px solid #7c4a03;color:#fbbf24;border-radius:6px;
+padding:10px 12px;font-size:13px;margin-bottom:16px;line-height:1.5}
+.warn b{color:#fcd34d}
+button{width:100%;background:#3b82f6;color:#fff;border:none;
+padding:12px;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+button:hover{background:#2563eb}
+button:disabled{background:#374151;color:#6b7280;cursor:not-allowed}
+.unsupported{background:#3f2d12;border:1px solid #7c4a03;color:#fbbf24;border-radius:6px;
+padding:12px;font-size:13px;line-height:1.5}
+footer{color:#6b7280;font-size:12px;text-align:center;margin:24px 0 8px}
+footer a{color:#60a5fa}
+</style>
+</head>
+<body>
+
+<h1>Warbler32</h1>
+<p class="sub">Flash the firmware directly from your browser — no installs, no cable-side software.</p>
+
+<div class="card">
+<h2>Requirements</h2>
+<p style="font-size:13px;color:#9ca3af;margin:0 0 8px;line-height:1.5">
+Works in <b style="color:#e5e7eb">Chrome</b> or <b style="color:#e5e7eb">Edge</b> —
+this uses the Web Serial API, which <b style="color:#e5e7eb">Safari does not support</b>
+(Firefox has very recently added support in the newest versions). Connect the board
+via the USB port labeled <b style="color:#e5e7eb">"UART"</b> (not "USB" — that one's
+only used for a USB microphone).
+</p>
+</div>
+
+<div class="card">
+<h2>Board</h2>
+<label for="variant">Your board's part number</label>
+<select id="variant">
+  <optgroup label="Quad PSRAM">
+    <option value="quad">N4R2</option>
+    <option value="quad">N8R2</option>
+    <option value="quad">N16R2</option>
+  </optgroup>
+  <optgroup label="Octal PSRAM">
+    <option value="oct">N4R8</option>
+    <option value="oct" selected>N8R8</option>
+    <option value="oct">N16R8</option>
+    <option value="oct">N32R16V</option>
+  </optgroup>
+</select>
+<p class="hint">Not sure? It's printed on the module (the metal-can chip) — the
+"R" number is what matters. N8R8 is the current default Espressif board.</p>
+
+<div class="warn">
+<b>This erases any saved settings</b> (WiFi, audio config — everything), the
+same as a factory reset. Only use this for first-time setup or intentionally
+starting over.
+</div>
+
+<esp-web-install-button id="install-btn" manifest="manifest-oct.json">
+  <button slot="activate">Connect &amp; Install</button>
+  <span slot="unsupported" class="unsupported">
+    Your browser doesn't support Web Serial. Use Chrome or Edge instead —
+    see the requirements above.
+  </span>
+  <span slot="not-allowed" class="unsupported">
+    Web Serial isn't available here (this page needs to be loaded over
+    HTTPS).
+  </span>
+</esp-web-install-button>
+</div>
+
+<footer>
+Prefer a command line? See the
+<a href="https://github.com/chrismyers2000/Warbler32#flashing-the-firmware-recommended-esptool">esptool method</a>
+in the README. &middot;
+<a href="https://github.com/chrismyers2000/Warbler32">Warbler32 on GitHub</a>
+</footer>
+
+<script>
+(function(){
+  var select = document.getElementById('variant');
+  var btn = document.getElementById('install-btn');
+  function sync(){
+    var variant = select.options[select.selectedIndex].value;
+    btn.setAttribute('manifest', 'manifest-' + variant + '.json');
+  }
+  select.addEventListener('change', sync);
+  sync();
+})();
+</script>
+
+</body>
+</html>

@@ -53,6 +53,12 @@ for confirmation before actually flashing.
 > `Warbler32-Setup` WiFi network and browse to `192.168.4.1` — see
 > [First-time WiFi setup](#first-time-wifi-setup) below.
 
+**On Windows, or don't want to touch a terminal at all?** Use the
+[browser-based flasher](https://chrismyers2000.github.io/Warbler32/)
+instead — pick your board from a dropdown and click Connect. No install of
+anything, not even esptool. Needs Chrome or Edge (Safari doesn't support
+the Web Serial API this relies on).
+
 <details>
 <summary>Prefer to do it manually, or already know your variant?</summary>
 
@@ -78,10 +84,6 @@ firmware will tell you at boot (over serial) if it's wrong.
 > (it needs a fresh shell to pick up the updated PATH).
 
 </details>
-
-A browser-based flasher (no `pip install` either — just a webpage) is
-planned for the future; for now, the script above is the simplest
-cable-only, IDE-free option.
 
 ## Building from source (VS Code + PlatformIO)
 
