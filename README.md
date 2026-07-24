@@ -27,12 +27,34 @@ No programming experience is required to use this — just follow the steps belo
 ## Flashing the firmware (recommended: esptool)
 
 The simplest way to get the firmware onto the board — no VS Code, no
-PlatformIO, no cloning the repo. Every
-[release](https://github.com/chrismyers2000/Warbler32/releases/latest)
-publishes a `warbler32-<variant>-factory.bin` — a single file with
-everything the board needs (bootloader, partition table, and firmware)
-already combined, ready to write starting at flash offset `0x0` with just
-[esptool](https://github.com/espressif/esptool):
+PlatformIO, no cloning the repo, and you don't even need to know whether
+your board is the Quad or Octal PSRAM variant. One command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/chrismyers2000/Warbler32/master/scripts/install.sh | bash
+```
+
+This detects your connected board's PSRAM variant automatically, downloads
+the matching `warbler32-<variant>-factory.bin` from the
+[latest release](https://github.com/chrismyers2000/Warbler32/releases/latest),
+and flashes it with [esptool](https://github.com/espressif/esptool)
+(installed automatically via `pip` if it isn't already present). It'll ask
+for confirmation before actually flashing.
+
+> **This wipes any saved settings** (WiFi, audio config — everything),
+> same as a factory reset, because the factory image spans the whole
+> region of flash where settings are stored. Perfect for a brand-new board;
+> **don't** point this at an already-configured device unless you want to
+> reconfigure it from scratch. After flashing, connect to the device's own
+> `Warbler32-Setup` WiFi network and browse to `192.168.4.1` — see
+> [First-time WiFi setup](#first-time-wifi-setup) below.
+
+<details>
+<summary>Prefer to do it manually, or already know your variant?</summary>
+
+Every release publishes the same `warbler32-<variant>-factory.bin` files as
+plain downloadable assets — grab the one matching your board and flash it
+yourself:
 
 ```bash
 pip install esptool
@@ -44,17 +66,11 @@ Octal-PSRAM) board — see [What you'll need](#what-youll-need) above; if
 you're not sure which you have, `quad` is the safer default and the
 firmware will tell you at boot (over serial) if it's wrong.
 
-> **This wipes any saved settings** (WiFi, audio config — everything),
-> same as a factory reset, because the combined image spans the whole
-> region of flash where settings are stored. Perfect for a brand-new board;
-> **don't** point this at an already-configured device unless you want to
-> reconfigure it from scratch. After flashing, connect to the device's own
-> `Warbler32-Setup` WiFi network and browse to `192.168.4.1` — see
-> [First-time WiFi setup](#first-time-wifi-setup) below.
+</details>
 
 A browser-based flasher (no `pip install` either — just a webpage) is
-planned for the future; for now, `esptool` is the simplest cable-only,
-IDE-free option.
+planned for the future; for now, the script above is the simplest
+cable-only, IDE-free option.
 
 ## Building from source (VS Code + PlatformIO)
 
