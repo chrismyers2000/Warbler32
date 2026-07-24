@@ -24,97 +24,144 @@ No programming experience is required to use this — just follow the steps belo
   `0x40`, which this firmware expects.
 - A computer running Windows, macOS, or Linux
 
-## 1. Get the code
+## Installation
 
-If you've never used GitHub before, the easiest way is to download a ZIP file —
-no extra software required:
+This project uses **PlatformIO** (via **VS Code**, a free code editor) to
+build and flash the firmware. Pick your operating system below — Linux is
+shown by default; click **Windows** or **macOS** to expand those instead.
 
-1. On this repository's GitHub page, click the green **`<> Code`** button (near
-   the top right).
-2. Click **Download ZIP**.
-3. Find the downloaded ZIP file (usually in your `Downloads` folder) and
-   extract/unzip it. You should end up with a folder named `warbler32` (or
-   `warbler32-main`).
+### Linux
+
+1. **Get the code:**
+   ```bash
+   git clone https://github.com/chrismyers2000/Warbler32.git
+   cd Warbler32
+   ```
+2. **Install the tools:**
+   1. Install [Visual Studio Code](https://code.visualstudio.com/docs/setup/linux)
+      for your distro (or `snap install code --classic` on distros that support
+      snaps).
+   2. Open VS Code, click the **Extensions** icon in the left sidebar (or press
+      `Ctrl+Shift+X`), search for **"PlatformIO IDE"**, and click **Install**.
+   3. Wait for the install to finish — this can take a few minutes. Let VS Code
+      reload/restart if it asks to.
+3. **Open the project:** **File → Open Folder...** and select the `Warbler32`
+   folder (the one containing `platformio.ini`). Give PlatformIO a minute the
+   first time — it downloads the ESP32-S3 toolchain in the background (progress
+   shows in the bottom status bar).
+4. **Connect and flash:** plug the board into your computer via the port
+   labeled **"UART"** (not "USB" — that one's only used later, for a USB
+   microphone), click the PlatformIO alien-head icon in the sidebar, then under
+   **PROJECT TASKS → esp32s3 → General** click **Upload**. (Or from a terminal
+   in the project folder: `pio run -t upload`.) This takes a minute or two the
+   first time; you'll see `[SUCCESS]` when it's done.
+5. **If the board isn't found:** you likely need permission on the serial
+   port — add your user to the `dialout` group and log out/back in:
+   ```bash
+   sudo usermod -aG dialout $USER
+   ```
+   Still nothing? Try a different USB cable (some are power-only) or port.
 
 <details>
-<summary>Prefer using Git instead?</summary>
+<summary><strong>Windows</strong></summary>
 
-If you have [Git](https://git-scm.com/downloads) installed, you can clone the
-repository from a terminal instead:
+1. **Get the code:** on this repository's GitHub page, click the green
+   **`<> Code`** button → **Download ZIP**. Find the downloaded ZIP (usually in
+   `Downloads`) and extract it — you'll get a folder named `Warbler32` (or
+   `Warbler32-main`).
+2. **Install the tools:**
+   1. Install [Visual Studio Code](https://code.visualstudio.com/) (run the
+      installer, accepting the defaults).
+   2. Open VS Code, click the **Extensions** icon in the left sidebar (or press
+      `Ctrl+Shift+X`), search for **"PlatformIO IDE"**, and click **Install**.
+   3. Wait for the install to finish — this can take a few minutes. Let VS Code
+      reload/restart if it asks to.
+3. **Open the project:** **File → Open Folder...** and select the extracted
+   `Warbler32` folder (the one containing `platformio.ini`). Give PlatformIO a
+   minute the first time — it downloads the ESP32-S3 toolchain in the
+   background (progress shows in the bottom status bar).
+4. **Connect and flash:** plug the board into your computer via the port
+   labeled **"UART"** (not "USB" — that one's only used later, for a USB
+   microphone), click the PlatformIO alien-head icon in the sidebar, then under
+   **PROJECT TASKS → esp32s3 → General** click **Upload**. This takes a minute
+   or two the first time; you'll see `[SUCCESS]` when it's done.
+5. **If the board isn't found:** install the
+   [CP210x or CH340 USB driver](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
+   (check the sticker/silkscreen near the USB port for which chip your board
+   uses) so Windows recognizes it as a serial device. Still nothing? Try a
+   different USB cable (some are power-only) or port.
 
-```bash
-git clone https://github.com/chrismyers2000/Warbler32.git
-cd Warbler32
-```
 </details>
 
-## 2. Install the tools
+<details>
+<summary><strong>macOS</strong></summary>
 
-This project uses **PlatformIO**, a free tool for building and flashing ESP32
-firmware. The easiest way to use it is through **VS Code**, a free code editor.
+1. **Get the code:** on this repository's GitHub page, click the green
+   **`<> Code`** button → **Download ZIP**. Find the downloaded ZIP (usually in
+   `Downloads`) and extract it — you'll get a folder named `Warbler32` (or
+   `Warbler32-main`).
+2. **Install the tools:**
+   1. Install [Visual Studio Code](https://code.visualstudio.com/) (drag it
+      into Applications).
+   2. Open VS Code, click the **Extensions** icon in the left sidebar (or press
+      `Cmd+Shift+X`), search for **"PlatformIO IDE"**, and click **Install**.
+   3. Wait for the install to finish — this can take a few minutes. Let VS Code
+      reload/restart if it asks to.
+3. **Open the project:** **File → Open Folder...** and select the extracted
+   `Warbler32` folder (the one containing `platformio.ini`). Give PlatformIO a
+   minute the first time — it downloads the ESP32-S3 toolchain in the
+   background (progress shows in the bottom status bar).
+4. **Connect and flash:** plug the board into your computer via the port
+   labeled **"UART"** (not "USB" — that one's only used later, for a USB
+   microphone), click the PlatformIO alien-head icon in the sidebar, then under
+   **PROJECT TASKS → esp32s3 → General** click **Upload**. This takes a minute
+   or two the first time; you'll see `[SUCCESS]` when it's done.
+5. **If the board isn't found:** install the
+   [CP210x or CH340 USB driver](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
+   (check the sticker/silkscreen near the USB port for which chip your board
+   uses) so macOS recognizes it as a serial device. Still nothing? Try a
+   different USB cable (some are power-only) or port.
 
-1. Install [Visual Studio Code](https://code.visualstudio.com/) (download the
-   installer for your operating system and run it, accepting the defaults).
-2. Open VS Code.
-3. Click the **Extensions** icon in the left-hand sidebar (it looks like four
-   small squares), or press `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
-4. Search for **"PlatformIO IDE"** and click **Install**.
-5. Wait for the install to finish — this can take a few minutes. VS Code may
-   ask to reload/restart itself; let it.
-6. Once installed, a new alien-head icon will appear in the left sidebar —
-   that's PlatformIO.
-
-## 3. Open the project
-
-1. In VS Code, go to **File → Open Folder...**
-2. Select the `warbler32` folder from step 1 (the one containing `platformio.ini`).
-3. PlatformIO will automatically detect the project. Give it a minute — the
-   first time you open it, PlatformIO downloads the ESP32-S3 toolchain and
-   dependencies in the background (you'll see progress in the bottom status bar).
-
-## 4. Connect and flash the board
-
-1. Connect the ESP32-S3-DevKitC-1 to your computer with a USB cable, using the
-   port labeled **"UART"** (not "USB" — that port is only used later, for a USB
-   microphone).
-2. Click the PlatformIO alien-head icon in the sidebar.
-3. Under **PROJECT TASKS → esp32s3 → General**, click **Upload**.
-   - (If you prefer the command line, you can instead run `pio run -t upload`
-     from a terminal opened in the project folder.)
-4. PlatformIO will compile the firmware and flash it to the board — this takes
-   a minute or two the first time. When it finishes, you'll see
-   `[SUCCESS]` in the terminal output at the bottom of VS Code.
-
-### Troubleshooting the upload
-
-- **Windows**: if the board isn't detected, you may need to install the
-  [CP210x or CH340 USB driver](https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers)
-  (whichever chip your board uses — check the sticker/silkscreen near the USB
-  port) so your computer recognizes it as a serial device.
-- **macOS**: similarly, install the CP210x/CH340 driver if the board doesn't
-  show up.
-- **Linux**: if you get a "Permission denied" error on the serial port, add
-  your user to the `dialout` group (`sudo usermod -aG dialout $USER`), then
-  log out and back in.
-- If PlatformIO can't find the board at all, try a different USB cable (some
-  are power-only and don't carry data) or a different USB port.
+</details>
 
 ## Wiring (I2S mic only — skip if using a USB microphone)
 
-The INMP441 and SPH0645 wire up identically (the SPH0645 labels its pins
-LRCL/BCLK/DOUT/SEL instead of WS/SCK/SD/L/R):
+### INMP441
 
-| INMP441 / SPH0645 pin | ESP32-S3 GPIO |
+| INMP441 pin | ESP32-S3 GPIO |
 |---|---|
-| WS / LRCL | 42 |
-| SCK / BCLK | 41 |
-| SD / DOUT | 40 |
-| L/R / SEL | GND |
+| VDD | 3.3V |
+| GND | GND |
+| WS | 42 |
+| SCK | 41 |
+| SD | 40 |
+| L/R | GND |
 
-The two mics need different I2S bus timing, so after setup pick your model
-under **Audio → I2S Mic Model** on the config page (default is INMP441).
-For the SPH0645, also enable the high-pass filter (e.g. 100 Hz) — that mic
-has a built-in DC offset the filter removes.
+Tying **L/R** to GND selects the left channel — the wiring this firmware
+expects.
+
+### Adafruit SPH0645
+
+The Adafruit SPH0645 breakout ([product page](https://www.adafruit.com/product/3421))
+silkscreens its pins differently from the INMP441, which is a common source of
+mis-wiring — use these exact labels, not the INMP441 names above:
+
+| SPH0645 (Adafruit) pin | ESP32-S3 GPIO |
+|---|---|
+| 3V | 3.3V |
+| GND | GND |
+| BCLK | 41 |
+| DOUT | 40 |
+| LRCL | 42 |
+| SEL | GND |
+
+Tying **SEL** to GND selects the left channel (the default) — the wiring this
+firmware expects.
+
+Both mics need different I2S bus timing internally, so after setup pick your
+model under **Audio → I2S Mic Model** on the config page (default is
+INMP441). For the SPH0645, also enable the high-pass filter (e.g. 100 Hz) —
+that mic has a built-in DC offset the filter removes.
 
 ## Wiring (USB microphone only — skip if using an I2S mic)
 
