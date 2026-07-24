@@ -107,8 +107,24 @@ if [ -z "$ESPTOOL" ]; then
     exit 1
 fi
 
+# esptool 5+ (which is what provides the plain `esptool` name — see
+# find_esptool above) also renamed its subcommands from underscores to
+# hyphens (chip_id -> chip-id, write_flash -> write-flash); the old
+# underscore forms only work there as a deprecated alias too. An
+# esptool.py-only install is necessarily pre-5.0 and only understands the
+# underscore forms — confirmed directly: PlatformIO's bundled 4.11.0
+# rejects "chip-id" outright ("invalid choice"). Tie the subcommand
+# spelling to the same binary-name signal so both cases work cleanly.
+if [ "$ESPTOOL" = "esptool" ]; then
+    CHIP_ID_CMD="chip-id"
+    WRITE_FLASH_CMD="write-flash"
+else
+    CHIP_ID_CMD="chip_id"
+    WRITE_FLASH_CMD="write_flash"
+fi
+
 echo "==> Detecting connected board (this reads its PSRAM size to pick the right build)..."
-DETECT_OUT="$("$ESPTOOL" --chip esp32s3 chip_id 2>&1)" || {
+DETECT_OUT="$("$ESPTOOL" --chip esp32s3 "$CHIP_ID_CMD" 2>&1)" || {
     echo "$DETECT_OUT" >&2
     echo "" >&2
     echo "error: couldn't talk to a board." >&2
@@ -162,7 +178,7 @@ case "$REPLY" in
 esac
 
 echo "==> Flashing..."
-"$ESPTOOL" --chip esp32s3 write_flash 0x0 "$TMP/$ASSET"
+"$ESPTOOL" --chip esp32s3 "$WRITE_FLASH_CMD" 0x0 "$TMP/$ASSET"
 
 echo ""
 echo "Done! Connect to the device's own \"Warbler32-Setup\" WiFi network"
