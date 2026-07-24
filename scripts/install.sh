@@ -24,6 +24,19 @@ REPO="chrismyers2000/Warbler32"
 
 echo "==> Checking for esptool..."
 if ! command -v esptool.py >/dev/null 2>&1; then
+    if ! python3 -m pip --version >/dev/null 2>&1; then
+        # Raspberry Pi OS ships python3-pip out of the box; plain
+        # Debian/Ubuntu (especially server/minimal installs) often don't.
+        if command -v apt-get >/dev/null 2>&1; then
+            echo "==> pip isn't installed; installing it (sudo apt-get install python3-pip)..."
+            sudo apt-get update && sudo apt-get install -y python3-pip
+        else
+            echo "error: Python 3's pip module isn't available, and this isn't an" >&2
+            echo "apt-based system, so it can't be installed automatically." >&2
+            echo "Install pip for Python 3 yourself, then re-run this script." >&2
+            exit 1
+        fi
+    fi
     echo "==> Installing esptool (python3 -m pip install --user esptool)..."
     PIP_OUT="$(python3 -m pip install --user -U esptool 2>&1)" || {
         if echo "$PIP_OUT" | grep -q "externally-managed-environment"; then
