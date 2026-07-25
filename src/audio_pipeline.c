@@ -6,6 +6,7 @@
 
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
@@ -158,6 +159,35 @@ static void mic_retry_task(void *arg)
             ESP_LOGW(TAG, "mic retry failed: %s", esp_err_to_name(ret));
         }
     }
+}
+
+// True once a reboot has been scheduled, so a second DISCONNECTED event
+// (e.g. flappy USB contact) doesn't queue a duplicate one.
+static atomic_bool s_usb_reboot_pending = false;
+
+// Tried live re-init in place of this (repeatedly calling usb_mic_init()
+// after the disconnect, without ever touching the old handle) and confirmed
+// on hardware that the ESP32-S3 USB-OTG peripheral never re-detects the
+// physical replug that way — matches the driver fragility already noted in
+// device_event_cb's DISCONNECTED handling in usb_mic.c (manual close/reopen
+// attempts there crashed the device outright). A full reboot is the only
+// path that reliably re-enumerates the device.
+static void usb_disconnect_reboot_task(void *arg)
+{
+    vTaskDelay(pdMS_TO_TICKS(500));
+    ESP_LOGW(TAG, "rebooting to reacquire the USB microphone");
+    esp_restart();
+}
+
+void audio_pipeline_retry_usb_mic(void)
+{
+    if (atomic_exchange(&s_usb_reboot_pending, true)) return;
+
+    xTaskCreatePinnedToCore(
+        usb_disconnect_reboot_task, "usb_reboot",
+        TASK_MIC_RETRY_STACK, NULL,
+        TASK_MIC_RETRY_PRIORITY, NULL,
+        TASK_MIC_RETRY_CORE);
 }
 
 esp_err_t audio_pipeline_start(void)

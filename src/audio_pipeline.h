@@ -24,6 +24,14 @@ bool audio_pipeline_is_active(void);
 // safe to call from any context.
 void audio_pipeline_mark_inactive(void);
 
+// Schedules a reboot to reacquire the USB mic after a runtime disconnect
+// (call right after audio_pipeline_mark_inactive() from the USB backend's
+// disconnect handler). Live re-init without a reboot was tried and doesn't
+// work — the ESP32-S3 USB-OTG peripheral doesn't re-detect the physical
+// replug — so a reboot is the only reliable recovery path. No-op if a
+// reboot is already pending.
+void audio_pipeline_retry_usb_mic(void);
+
 // Each streaming client subscribes to get its own ring buffer (starts
 // empty), reads from it, and unsubscribes when done. Returns a reader
 // handle >= 0, or -1 if all PIPELINE_MAX_READERS slots are taken.

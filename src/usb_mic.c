@@ -66,6 +66,7 @@ static void device_event_cb(uac_host_device_handle_t handle,
         ESP_LOGW(TAG, "USB microphone disconnected");
         s_dev = NULL;
         audio_pipeline_mark_inactive();
+        audio_pipeline_retry_usb_mic();
         break;
     case UAC_HOST_DEVICE_EVENT_TRANSFER_ERROR:
         ESP_LOGW(TAG, "USB microphone transfer error");
