@@ -140,7 +140,12 @@ static const char *s_html =
     "</div>"
     "<div class=\"card\"><h2>WiFi</h2>"
     "<label class=\"tip\" data-tip=\"Your WiFi network name. Change this to move the device to a different network. Takes effect after reboot.\">SSID</label>"
-    "<input name=\"ssid\" value=\"%s\" autocomplete=\"off\" spellcheck=\"false\">"
+    "<div style=\"display:flex;gap:8px;align-items:flex-start\">"
+    "<input name=\"ssid\" id=\"ssidIn\" value=\"%s\" autocomplete=\"off\" spellcheck=\"false\" style=\"flex:1\">"
+    "<button type=\"button\" id=\"scanBtn\" onclick=\"doScan()\" style=\"width:auto;padding:8px 14px;font-size:13px;margin:0;background:#374151\">Scan</button>"
+    "</div>"
+    "<select id=\"scanSel\" style=\"display:none\" onchange=\"pickScan()\"><option value=\"\">Select a network&hellip;</option></select>"
+    "<p id=\"scanSt\" style=\"font-size:11px;color:#6b7280;margin:4px 0 12px\"></p>"
     "<label class=\"tip\" data-tip=\"WiFi password. Leave blank for open networks. Stored in device flash.\">Password</label>"
     "<input name=\"password\" type=\"password\" value=\"%s\" autocomplete=\"new-password\">"
     "<label class=\"tip\" data-tip=\"Maximum WiFi transmit power. Lower values reduce range but can also reduce RF noise coupling into nearby mic wiring/power rails if audio sounds noisy despite a stable connection. 20 dBm = full power.\">TX Power &nbsp;<span class=\"val\" id=\"txv\">%d</span> dBm</label>"
@@ -264,6 +269,13 @@ static const char *s_html =
     "<option value=\"1\"%s>Enabled</option>"
     "<option value=\"0\"%s>Disabled</option>"
     "</select>"
+    "<label class=\"tip\" data-tip=\"Brings up a temporary backup network (\"" WIFI_AP_SSID "\") if the saved WiFi network stays unreachable past the timeout below - without dropping an active stream or stopping reconnect attempts in the background. Also toggleable any time by double-tapping the BOOT button.\">Backup AP on WiFi Outage</label>"
+    "<select name=\"wifi_fallback_enabled\">"
+    "<option value=\"1\"%s>Enabled</option>"
+    "<option value=\"0\"%s>Disabled</option>"
+    "</select>"
+    "<label class=\"tip\" data-tip=\"How many minutes WiFi must stay unreachable before the backup AP appears.\">Backup AP Timeout (minutes)</label>"
+    "<input type=\"number\" name=\"wifi_fallback_timeout_min\" min=\"1\" max=\"30\" value=\"%d\">"
     "</div>"
     "<input type=\"hidden\" name=\"tab\" value=\"diagnostics\">"
     "<button type=\"submit\">Save</button>"
@@ -504,6 +516,29 @@ static const char *s_html =
     "},1000);"
     "});"
     "};"
+    "window.doScan=function(){"
+    "var b=$('scanBtn'),st=$('scanSt'),sel=$('scanSel');"
+    "b.disabled=true;st.textContent='Scanning\\u2026';sel.style.display='none';"
+    "fetch('/wifi/scan').then(function(r){return r.json();})"
+    ".then(function(j){"
+    "b.disabled=false;"
+    "if(j.error){st.textContent=j.error;return;}"
+    "sel.innerHTML='<option value=\"\">Select a network&hellip;</option>';"
+    "j.networks.forEach(function(n){"
+    "var o=document.createElement('option');"
+    "o.value=n.ssid;"
+    "o.textContent=n.ssid+' ('+n.rssi+' dBm'+(n.secure?', secured':'')+')';"
+    "sel.appendChild(o);"
+    "});"
+    "if(j.networks.length){sel.style.display='block';"
+    "st.textContent='Found '+j.networks.length+' network(s) \\u2014 pick one below.';}"
+    "else{st.textContent='No networks found.';}"
+    "}).catch(function(){b.disabled=false;st.textContent='Scan failed \\u2014 connection error.';});"
+    "};"
+    "window.pickScan=function(){"
+    "var sel=$('scanSel');"
+    "if(sel.value)$('ssidIn').value=sel.value;"
+    "};"
     "window.doOta=function(){"
     "var f=document.getElementById('fw').files[0];"
     "if(!f){alert('Choose a firmware .bin file first.');return;}"
@@ -645,13 +680,43 @@ static void html_escape(const char *in, char *out, size_t outsz)
     out[o] = '\0';
 }
 
+// Escapes ", \, and control characters for safe embedding into a JSON
+// string literal. Needed for /wifi/scan: unlike every other JSON field this
+// server sends (version strings, counters — all internally controlled),
+// SSIDs come from whatever nearby APs are named, which is attacker-
+// influenceable input. html_escape() above is for HTML context, not JSON,
+// and would leave raw " / \ / control bytes in place.
+static void json_escape(const char *in, char *out, size_t outsz)
+{
+    size_t o = 0;
+    for (size_t i = 0; in[i] != '\0' && o < outsz - 1; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c == '"' || c == '\\') {
+            if (o + 2 >= outsz) break;
+            out[o++] = '\\';
+            out[o++] = (char)c;
+        } else if (c < 0x20) {
+            if (o + 6 >= outsz) break;
+            o += snprintf(out + o, outsz - o, "\\u%04x", c);
+        } else {
+            out[o++] = (char)c;
+        }
+    }
+    out[o] = '\0';
+}
+
 // ---------------------------------------------------------------------------
 // GET / — serve config page
 // ---------------------------------------------------------------------------
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
     char status_line[256];
-    if (wifi_manager_is_ap_mode()) {
+    if (wifi_manager_is_fallback_mode()) {
+        snprintf(status_line, sizeof(status_line),
+            "<p class=\"sub\" style=\"color:#f59e0b\">WiFi unreachable &mdash; connect here to "
+            "check status or fix settings. Still retrying the saved network in the "
+            "background; this backup AP drops on its own once it reconnects.</p>");
+    } else if (wifi_manager_is_ap_mode()) {
         snprintf(status_line, sizeof(status_line),
             "<p class=\"sub\" style=\"color:#f59e0b\">Setup Mode &mdash; enter your WiFi "
             "network below, then Save.</p>");
@@ -718,6 +783,9 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.batt_full_mv / 1000.0,
         g_config.watchdog_enabled ? " selected" : "",
         !g_config.watchdog_enabled ? " selected" : "",
+        g_config.wifi_fallback_enabled ? " selected" : "",
+        !g_config.wifi_fallback_enabled ? " selected" : "",
+        (int)g_config.wifi_fallback_timeout_min,
         app->version, ota_board_variant(), app->date);
 
     // snprintf returns the would-be length: if the page outgrows the buffer,
@@ -909,6 +977,16 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 
     get_field(body, "watchdog_enabled", val, sizeof(val));
     if (val[0]) g_config.watchdog_enabled = atoi(val) ? 1 : 0;
+
+    get_field(body, "wifi_fallback_enabled", val, sizeof(val));
+    if (val[0]) g_config.wifi_fallback_enabled = atoi(val) ? 1 : 0;
+
+    get_field(body, "wifi_fallback_timeout_min", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= WIFI_FALLBACK_TIMEOUT_MIN_MIN && v <= WIFI_FALLBACK_TIMEOUT_MIN_MAX)
+            g_config.wifi_fallback_timeout_min = (uint8_t)v;
+    }
 
     // Which tab's form posted this — used only to send the browser back to
     // that tab after the reload, so saving e.g. Audio settings doesn't dump
@@ -1299,6 +1377,42 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /wifi/scan — on-demand network list for the SSID picker in the WiFi
+// card (same card/route in both setup-AP and normal operation). Blocking: a
+// scan takes a couple of seconds and stalls this HTTP worker while it runs
+// — RTSP is a separate server/socket entirely and is unaffected. See
+// wifi_manager_scan() for what happens to STA/streaming during the scan
+// itself.
+// ---------------------------------------------------------------------------
+static esp_err_t wifi_scan_get_handler(httpd_req_t *req)
+{
+    wifi_scan_result_t results[20];
+    int count = wifi_manager_scan(results, 20);
+
+    char json[1536];
+    int len;
+    if (count < 0) {
+        len = snprintf(json, sizeof(json), "{\"error\":\"Scan failed \\u2014 try again.\"}");
+    } else {
+        len = snprintf(json, sizeof(json), "{\"networks\":[");
+        for (int i = 0; i < count && len < (int)sizeof(json) - 1; i++) {
+            char ssid_esc[80];
+            json_escape(results[i].ssid, ssid_esc, sizeof(ssid_esc));
+            len += snprintf(json + len, sizeof(json) - (size_t)len,
+                "%s{\"ssid\":\"%s\",\"rssi\":%d,\"secure\":%d}",
+                i ? "," : "", ssid_esc, results[i].rssi, results[i].secure ? 1 : 0);
+        }
+        len += snprintf(json + len, sizeof(json) - (size_t)len, "]}");
+    }
+    if (len >= (int)sizeof(json)) len = sizeof(json) - 1;
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 esp_err_t web_server_start(void)
@@ -1356,6 +1470,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_listen = {
         .uri = "/listen", .method = HTTP_GET, .handler = listen_get_handler,
     };
+    static const httpd_uri_t get_wifi_scan = {
+        .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
@@ -1367,6 +1484,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &post_upd_install);
     httpd_register_uri_handler(server, &get_upd_progress);
     httpd_register_uri_handler(server, &get_listen);
+    httpd_register_uri_handler(server, &get_wifi_scan);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);

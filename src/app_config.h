@@ -27,6 +27,8 @@ typedef struct {
     uint16_t batt_full_mv;
     uint8_t  wifi_tx_power_dbm; // max WiFi TX power, 8-20 dBm (see WIFI_TX_POWER_*)
     uint8_t  watchdog_enabled;  // reboot if the audio pipeline stalls (see pipeline_watchdog.h)
+    uint8_t  wifi_fallback_enabled;    // bring up the backup AP after a long WiFi outage (see WIFI_FALLBACK_*)
+    uint8_t  wifi_fallback_timeout_min; // minutes disconnected before the backup AP comes up
 } app_config_t;
 
 extern app_config_t g_config;

@@ -32,6 +32,25 @@
 #define WIFI_TX_POWER_DBM_MIN      8
 #define WIFI_TX_POWER_DBM_MAX      20
 
+// Backup AP: once a saved network has been joined successfully at least
+// once, a later drop retries forever in the background rather than
+// replacing STA with the setup AP (see wifi_manager.c) — that would tear
+// down an active RTSP stream and, unlike the boot-time case, there's a
+// known-good network to keep trying. But that means an outage that never
+// clears (moved router, changed password, out of range for good) leaves
+// the device completely unreachable. After WIFI_FALLBACK_TIMEOUT_MIN
+// minutes of unbroken disconnection, the backup AP comes up *alongside*
+// the still-retrying STA connection (concurrent AP+STA, not a mode
+// switch), so the device stays reachable for a settings fix without
+// disturbing whatever might reconnect on its own. User-toggleable and the
+// timeout is user-adjustable via the web UI (app_config.h
+// wifi_fallback_enabled/wifi_fallback_timeout_min).
+#define WIFI_FALLBACK_DEFAULT_ENABLED     1
+#define WIFI_FALLBACK_TIMEOUT_MIN_DEFAULT 2
+#define WIFI_FALLBACK_TIMEOUT_MIN_MIN     1
+#define WIFI_FALLBACK_TIMEOUT_MIN_MAX     30
+#define WIFI_FALLBACK_CHECK_INTERVAL_MS   10000
+
 // =============================================================================
 // BOOT button (GPIO0) gestures — checked only while the app is already
 // running, never at power-on: GPIO0's bootloader-strapping role would
@@ -200,6 +219,11 @@
 #define TASK_WATCHDOG_STACK     3072
 #define TASK_WATCHDOG_PRIORITY  2
 #define TASK_WATCHDOG_CORE      1
+
+// Background WiFi backup-AP fallback watchdog task (see WIFI_FALLBACK_* above)
+#define TASK_WIFI_FALLBACK_STACK     3072
+#define TASK_WIFI_FALLBACK_PRIORITY  2
+#define TASK_WIFI_FALLBACK_CORE      1
 
 // =============================================================================
 // Battery monitor (INA219 I2C voltage sensor) — optional. If no INA219 is

@@ -55,15 +55,17 @@ static void monitor_task(void *arg)
             status_led_set(prev_led);
 
             // Released before the hold threshold — a quick tap. A second one
-            // within the window makes this a double-press.
+            // within the window makes this a double-press: toggle the
+            // backup AP. A single tap (no second one arrives) instead
+            // cycles the AP's channel, but only means anything while one is
+            // already up.
             if (wait_for_second_tap()) {
-                if (wifi_manager_is_ap_mode()) {
-                    uint8_t ch = wifi_manager_cycle_ap_channel();
-                    ESP_LOGI(TAG, "double-press: setup AP switched to channel %d", ch);
-                    status_led_flash();
-                } else {
-                    ESP_LOGI(TAG, "double-press ignored (not broadcasting setup AP)");
-                }
+                wifi_manager_toggle_fallback_ap();
+                status_led_flash();
+            } else if (wifi_manager_is_ap_mode()) {
+                uint8_t ch = wifi_manager_cycle_ap_channel();
+                ESP_LOGI(TAG, "single tap: AP switched to channel %d", ch);
+                status_led_flash();
             }
         }
         vTaskDelay(pdMS_TO_TICKS(20));

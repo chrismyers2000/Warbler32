@@ -6,10 +6,13 @@
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "mdns.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "freertos/task.h"
+#include <stdatomic.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -29,6 +32,33 @@ static bool s_want_ap        = false;
 // later runtime drop (retries forever — falling back to the setup AP would
 // tear down STA and kill an already-running RTSP stream for no good reason).
 static bool s_ever_connected = false;
+
+// Set on every WIFI_EVENT_STA_DISCONNECTED that starts a new outage after a
+// successful boot connection (the "keep retrying forever" branch below), to
+// the esp_timer_get_time() at which this outage began; cleared back to 0 on
+// reconnect. Read by wifi_fallback_task() to decide when to bring up the
+// backup AP.
+static _Atomic int64_t s_disconnected_since_us = 0;
+
+// True while the backup AP is up specifically because a saved network
+// became unreachable (timeout or manual BOOT-button toggle) — as opposed to
+// s_ap_mode alone, which is also true for the original "no saved network
+// configured yet" setup AP. Distinguishes the two for the web UI banner and
+// the BOOT-button toggle logic (see wifi_manager_toggle_fallback_ap()).
+static bool s_fallback_mode = false;
+
+// Mirrors whether STA currently has an IP, so exit_fallback_ap_mode() can
+// restore the right status LED without re-deriving it.
+static bool s_sta_connected = false;
+
+// True for the duration of wifi_manager_scan(). ESP-IDF refuses to scan
+// while STA is mid-connect-attempt (esp_wifi_scan_start returns
+// ESP_ERR_WIFI_STATE) — during a real outage the disconnect handler below
+// calls esp_wifi_connect() again on every single WIFI_EVENT_STA_DISCONNECTED,
+// so without this a scan from the backup AP page would almost always lose
+// that race. Sat by wifi_manager_scan() to skip that one connect call while
+// a scan is in flight; it resumes the retry loop itself once the scan ends.
+static atomic_bool s_scan_suppress_connect = false;
 
 // Manual BOOT-button-double-press rotation. Includes channel 1, unlike the
 // automatic scan's candidates — the auto-picker avoids it based on evidence
@@ -130,13 +160,157 @@ static void enter_ap_mode(void)
         if (kManualChannels[i] == channel) { s_channel_idx = (int)i; break; }
     }
 
-    esp_wifi_set_mode(WIFI_MODE_AP);
+    // APSTA rather than AP-only: STA stays present (idle, since s_want_ap
+    // blocks the auto-connect above) so a WiFi scan is still possible from
+    // this page — see wifi_manager_scan(). Harmless with no saved network:
+    // there's nothing for STA to do either way.
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
     configure_ap(channel);
 
     s_ap_mode = true;
     status_led_set(LED_SETUP);
     ESP_LOGW(TAG, "setup AP \"%s\" up at 192.168.4.1 (password: %s) — connect and browse there to configure WiFi",
              WIFI_AP_SSID, WIFI_AP_PASSWORD);
+}
+
+// Brings up the backup AP without disturbing STA — concurrent AP+STA, so
+// whatever might reconnect on its own keeps trying the whole time. Shared
+// by wifi_fallback_task() (timeout-triggered) and
+// wifi_manager_toggle_fallback_ap() (manual BOOT-button toggle).
+static void enter_fallback_ap_mode(void)
+{
+    uint8_t channel = pick_least_congested_channel();
+
+    for (size_t i = 0; i < sizeof(kManualChannels) / sizeof(kManualChannels[0]); i++) {
+        if (kManualChannels[i] == channel) { s_channel_idx = (int)i; break; }
+    }
+
+    esp_wifi_set_mode(WIFI_MODE_APSTA);
+    configure_ap(channel);
+
+    s_ap_mode       = true;
+    s_fallback_mode = true;
+    status_led_set(LED_SETUP);
+    ESP_LOGW(TAG, "backup AP \"%s\" up at 192.168.4.1 (password: %s) — WiFi unreachable, still retrying in the background",
+             WIFI_AP_SSID, WIFI_AP_PASSWORD);
+}
+
+// Drops the backup AP, back to STA-only. Safe whether STA just reconnected
+// (self-heal) or is still retrying (manual toggle-off).
+static void exit_fallback_ap_mode(void)
+{
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    s_ap_mode       = false;
+    s_fallback_mode = false;
+    // Restart the outage clock rather than leaving it running: if WiFi is
+    // still actually down, a manual toggle-off means "not right now," not
+    // "show it again immediately" — this buys another full timeout period.
+    atomic_store(&s_disconnected_since_us, s_sta_connected ? 0 : esp_timer_get_time());
+    status_led_set(s_sta_connected ? LED_CONNECTED : LED_CONNECTING);
+    ESP_LOGW(TAG, "backup AP down");
+}
+
+// Polls for a WiFi outage that's outlasted the configured timeout and, if
+// so, brings up the backup AP — see WIFI_FALLBACK_* in config.h for why.
+static void wifi_fallback_task(void *arg)
+{
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(WIFI_FALLBACK_CHECK_INTERVAL_MS));
+
+        if (!g_config.wifi_fallback_enabled || s_fallback_mode) continue;
+
+        int64_t since = atomic_load(&s_disconnected_since_us);
+        if (since == 0) continue;
+
+        int64_t elapsed_min = (esp_timer_get_time() - since) / 60000000;
+        if (elapsed_min >= g_config.wifi_fallback_timeout_min) {
+            ESP_LOGW(TAG, "WiFi unreachable for %d+ min — bringing up backup AP",
+                     g_config.wifi_fallback_timeout_min);
+            enter_fallback_ap_mode();
+        }
+    }
+}
+
+// BOOT-button double-tap handler — see wifi_manager.h for the exact
+// semantics of each branch.
+void wifi_manager_toggle_fallback_ap(void)
+{
+    if (s_fallback_mode) {
+        exit_fallback_ap_mode();
+    } else if (!s_ap_mode) {
+        enter_fallback_ap_mode();
+    } else {
+        ESP_LOGI(TAG, "double-press ignored (no known network to fall back to)");
+    }
+}
+
+// See wifi_manager.h for the contract.
+int wifi_manager_scan(wifi_scan_result_t *out, int max_results)
+{
+    atomic_store(&s_scan_suppress_connect, true);
+
+    wifi_scan_config_t scan_cfg = {0};  // all channels, active scan, default dwell time
+    esp_err_t ret = ESP_FAIL;
+    // A reconnect attempt already in flight when this call started (there's
+    // a gap between suppressing future ones above and this actually
+    // running) still collides — ESP_ERR_WIFI_STATE means "busy, try again
+    // shortly," not a real failure, so retry a few times rather than
+    // surfacing it to the user immediately.
+    for (int attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(300));
+        ret = esp_wifi_scan_start(&scan_cfg, true /* block */);
+        if (ret == ESP_OK || ret != ESP_ERR_WIFI_STATE) break;
+    }
+
+    atomic_store(&s_scan_suppress_connect, false);
+    // Resume the reconnect loop ourselves: suppressing the disconnect
+    // handler's esp_wifi_connect() call above means nothing else will kick
+    // it again on its own if we're still mid-outage.
+    if (s_ever_connected && !s_sta_connected) esp_wifi_connect();
+
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "wifi scan failed: %s", esp_err_to_name(ret));
+        return -1;
+    }
+
+    uint16_t num = 0;
+    esp_wifi_scan_get_ap_num(&num);
+    if (num == 0) return 0;
+
+    wifi_ap_record_t *records = calloc(num, sizeof(*records));
+    if (!records) return -1;
+    esp_wifi_scan_get_ap_records(&num, records);
+
+    int count = 0;
+    for (int i = 0; i < num && count < max_results; i++) {
+        if (records[i].ssid[0] == '\0') continue;  // hidden network — nothing to show/pick
+
+        int existing = -1;
+        for (int j = 0; j < count; j++) {
+            if (strcmp((char *)records[i].ssid, out[j].ssid) == 0) { existing = j; break; }
+        }
+        if (existing >= 0) {
+            // Same SSID seen on another channel/BSSID — keep the stronger one.
+            if (records[i].rssi > out[existing].rssi) out[existing].rssi = records[i].rssi;
+            continue;
+        }
+
+        strlcpy(out[count].ssid, (char *)records[i].ssid, sizeof(out[count].ssid));
+        out[count].rssi   = records[i].rssi;
+        out[count].secure = records[i].authmode != WIFI_AUTH_OPEN;
+        count++;
+    }
+    free(records);
+
+    // Sort strongest-first (insertion sort — result sets are small).
+    for (int i = 1; i < count; i++) {
+        wifi_scan_result_t tmp = out[i];
+        int j = i - 1;
+        while (j >= 0 && out[j].rssi < tmp.rssi) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = tmp;
+    }
+
+    return count;
 }
 
 // Advance to the next channel in the manual rotation. No-op if not currently
@@ -177,9 +351,18 @@ static void event_handler(void *arg, esp_event_base_t base,
             // Runtime drop after a successful boot connection — keep
             // retrying indefinitely rather than falling back to the setup
             // AP, which would tear down STA and kill the running stream.
+            // wifi_fallback_task() brings up a *concurrent* backup AP on
+            // its own timeout if this drags on, without touching STA here.
             ESP_LOGW(TAG, "WiFi dropped, reconnecting...");
-            status_led_set(LED_CONNECTING);
-            esp_wifi_connect();
+            s_sta_connected = false;
+            if (!s_fallback_mode) status_led_set(LED_CONNECTING);
+            if (atomic_load(&s_disconnected_since_us) == 0)
+                atomic_store(&s_disconnected_since_us, esp_timer_get_time());
+            // Skip this one reconnect attempt if a scan is in flight — see
+            // s_scan_suppress_connect. wifi_manager_scan() itself kicks the
+            // retry loop again once the scan ends, so this isn't lost, just
+            // deferred.
+            if (!atomic_load(&s_scan_suppress_connect)) esp_wifi_connect();
         } else if (s_retry_count < WIFI_MAX_RETRIES) {
             esp_wifi_connect();
             s_retry_count++;
@@ -194,6 +377,14 @@ static void event_handler(void *arg, esp_event_base_t base,
         ESP_LOGI(TAG, "connected — IP: " IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_count = 0;
         s_ever_connected = true;
+        s_sta_connected  = true;
+        atomic_store(&s_disconnected_since_us, 0);
+        // Self-heal: the saved network is back, so the temporary backup AP
+        // (if the outage ran long enough to trigger it) is no longer
+        // needed. The original "no saved network yet" setup AP never
+        // reaches this branch in the first place — reconnecting to nothing
+        // isn't possible — so this can't misfire on that case.
+        if (s_fallback_mode) exit_fallback_ap_mode();
         status_led_set(LED_CONNECTED);
 
         // WiFi modem-sleep power save (IDF default: WIFI_PS_MIN_MODEM) puts
@@ -220,6 +411,11 @@ static void event_handler(void *arg, esp_event_base_t base,
 bool wifi_manager_is_ap_mode(void)
 {
     return s_ap_mode;
+}
+
+bool wifi_manager_is_fallback_mode(void)
+{
+    return s_fallback_mode;
 }
 
 esp_err_t wifi_manager_start(void)
@@ -278,6 +474,12 @@ esp_err_t wifi_manager_start(void)
     // sets WIFI_READY_BIT on every reconnect, not just the first one, so the
     // handle must stay valid for the device's lifetime. The extra SetBits
     // calls after boot are harmless no-ops since nothing waits on it anymore.
+
+    xTaskCreatePinnedToCore(
+        wifi_fallback_task, "wifi_fallback",
+        TASK_WIFI_FALLBACK_STACK, NULL,
+        TASK_WIFI_FALLBACK_PRIORITY, NULL,
+        TASK_WIFI_FALLBACK_CORE);
 
     return ESP_OK;
 }
