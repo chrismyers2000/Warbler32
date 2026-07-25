@@ -181,6 +181,18 @@
 #define PIPELINE_MAX_READERS 3   // RTSP_MAX_CLIENTS + 1 browser preview stream
 
 // =============================================================================
+// Live log streaming (see log_stream.h) — captures ESP_LOG output into a
+// ring buffer so the web UI's Diagnostics tab can tail it without a USB
+// serial connection. Log text is far lower-volume than PCM audio, so this
+// is much smaller than PIPELINE_BUF_BYTES above; 8KB holds several seconds
+// of typical boot-time logging as initial backlog when a tab first
+// connects. Single reader: only one Diagnostics tab is expected to have
+// the log stream open at a time.
+// =============================================================================
+#define LOG_STREAM_BUF_BYTES   8192
+#define LOG_STREAM_MAX_READERS 1
+
+// =============================================================================
 // NeoPixel status LED (WS2812B on GPIO 48 = onboard RGB LED)
 // =============================================================================
 #define NEOPIXEL_GPIO       48

@@ -6,6 +6,7 @@
 #include "pipeline_watchdog.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
+#include "log_stream.h"
 #include "config.h"
 
 #include "esp_wifi.h"
@@ -282,6 +283,12 @@ static const char *s_html =
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
     "Applies instantly.</p>"
     "</form>"
+    "<div class=\"card\" style=\"margin-top:16px\"><h2>Live Log</h2>"
+    "<button type=\"button\" id=\"logbtn\" onclick=\"toggleLogs()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 8px 10px 0\">Start Log Stream</button>"
+    "<button type=\"button\" onclick=\"location.href='/logs/download'\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 10px\">Download Log</button>"
+    "<pre id=\"logOut\" style=\"background:#111827;border-radius:4px;padding:8px;height:240px;overflow-y:auto;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;margin:0\"></pre>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0\">Tails the device's serial log live &mdash; the same output you'd see over USB. Only one browser tab can stream it at a time.</p>"
+    "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-firmware\">"
     "<div class=\"card\"><h2>Firmware</h2>"
@@ -478,6 +485,31 @@ static const char *s_html =
     "}).catch(function(){lsnStop();});"
     "})();"
     "}).catch(function(e){lsnStop();if(e&&e.name!=='AbortError')alert('Preview failed: '+e);});"
+    "};"
+    "var logAbort=null;"
+    "function logStop(){"
+    "if(logAbort){try{logAbort.abort();}catch(e){}logAbort=null;}"
+    "$('logbtn').textContent='Start Log Stream';"
+    "}"
+    "window.toggleLogs=function(){"
+    "if(logAbort){logStop();return;}"
+    "var out=$('logOut');"
+    "logAbort=new AbortController();"
+    "$('logbtn').textContent='Connecting\\u2026';"
+    "fetch('/logs',{signal:logAbort.signal}).then(function(r){"
+    "if(!r.ok){return r.text().then(function(t){throw t||('HTTP '+r.status);});}"
+    "var dec=new TextDecoder(),rd=r.body.getReader();"
+    "$('logbtn').textContent='Stop Log Stream';"
+    "(function pump(){"
+    "rd.read().then(function(res){"
+    "if(res.done){logStop();return;}"
+    "out.textContent+=dec.decode(res.value,{stream:true});"
+    "if(out.textContent.length>20000)out.textContent=out.textContent.slice(-20000);"
+    "out.scrollTop=out.scrollHeight;"
+    "pump();"
+    "}).catch(function(){logStop();});"
+    "})();"
+    "}).catch(function(e){logStop();if(e&&e.name!=='AbortError')alert('Log stream failed: '+e);});"
     "};"
     "window.doChk=function(){"
     "var b=$('chkbtn'),st=$('chkst');"
@@ -1317,6 +1349,104 @@ static esp_err_t listen_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /logs — live ESP_LOG tail for the Diagnostics tab (see log_stream.h).
+// Same async-detached chunked-streaming shape as /listen above; exclusivity
+// is handled by log_stream_subscribe() itself (single reader slot) rather
+// than a separate busy flag, since there's only ever one slot to contend for.
+// ---------------------------------------------------------------------------
+static void logs_stream_task(void *arg)
+{
+    httpd_req_t *req = (httpd_req_t *)arg;
+    char buf[512];
+
+    int reader = log_stream_subscribe();
+    if (reader < 0) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Log stream already in use");
+        goto out;
+    }
+
+    // Detect a vanished browser quickly: without this, a dead connection
+    // blocks the chunk send for the full default socket timeout.
+    int fd = httpd_req_to_sockfd(req);
+    if (fd >= 0) {
+        struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    // A quiet device can go a long time between log lines — unlike /listen
+    // above, where the mic keeps producing samples even in silence, "no new
+    // log data" is the common case here. Without a periodic heartbeat this
+    // loop would never call httpd_resp_send_chunk during an idle spell, so
+    // a client that vanished mid-quiet-period (only detectable via that
+    // call failing) would never be noticed, leaking the one reader slot
+    // until reboot. Every ~2s of silence, send a single space instead of
+    // real log data just to probe the connection.
+    TickType_t last_send = xTaskGetTickCount();
+    for (;;) {
+        size_t got = log_stream_read(reader, buf, sizeof(buf), 200);
+        if (got == 0) {
+            if ((xTaskGetTickCount() - last_send) < pdMS_TO_TICKS(2000)) continue;
+            buf[0] = ' ';
+            got = 1;
+        }
+        if (httpd_resp_send_chunk(req, buf, got) != ESP_OK) break;  // client gone
+        last_send = xTaskGetTickCount();
+    }
+
+    log_stream_unsubscribe(reader);
+    httpd_resp_send_chunk(req, NULL, 0);
+out:
+    httpd_req_async_handler_complete(req);
+    vTaskDelete(NULL);
+}
+
+static esp_err_t logs_get_handler(httpd_req_t *req)
+{
+    httpd_req_t *async_req;
+    if (httpd_req_async_handler_begin(req, &async_req) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Async setup failed");
+        return ESP_FAIL;
+    }
+    if (xTaskCreate(logs_stream_task, "logs", 4096, async_req, 3, NULL) != pdPASS) {
+        httpd_req_async_handler_complete(async_req);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
+// GET /logs/download — one-shot snapshot of the log buffer as a downloadable
+// file (Download Log button next to Start Log Stream). Unlike /logs above,
+// this is a plain synchronous handler: the whole buffer is at most
+// LOG_STREAM_BUF_BYTES and fits in a single response, no streaming/async
+// handoff needed, and log_stream_dump() doesn't touch reader state so this
+// works fine even while a live tail is already open.
+// ---------------------------------------------------------------------------
+static esp_err_t logs_download_get_handler(httpd_req_t *req)
+{
+    char *buf = malloc(LOG_STREAM_BUF_BYTES);
+    if (!buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+
+    size_t n = log_stream_dump(buf, LOG_STREAM_BUF_BYTES);
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"warbler32-log.txt\"");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, buf, n);
+
+    free(buf);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // GET /status — device diagnostics for the web UI (and anything else)
 // ---------------------------------------------------------------------------
 static esp_err_t status_get_handler(httpd_req_t *req)
@@ -1473,6 +1603,12 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_wifi_scan = {
         .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler,
     };
+    static const httpd_uri_t get_logs = {
+        .uri = "/logs", .method = HTTP_GET, .handler = logs_get_handler,
+    };
+    static const httpd_uri_t get_logs_download = {
+        .uri = "/logs/download", .method = HTTP_GET, .handler = logs_download_get_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
@@ -1485,6 +1621,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_upd_progress);
     httpd_register_uri_handler(server, &get_listen);
     httpd_register_uri_handler(server, &get_wifi_scan);
+    httpd_register_uri_handler(server, &get_logs);
+    httpd_register_uri_handler(server, &get_logs_download);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);

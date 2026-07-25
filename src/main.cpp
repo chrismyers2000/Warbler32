@@ -7,6 +7,7 @@
 #include "audio_pipeline.h"
 #include "rtsp_server.h"
 #include "pipeline_watchdog.h"
+#include "log_stream.h"
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -14,6 +15,11 @@
 
 extern "C" void app_main(void)
 {
+    // Capture ESP_LOG output for the web UI's live log viewer before
+    // anything else can log — installing the hook has no dependencies of
+    // its own (PSRAM and the FreeRTOS scheduler are already up by now).
+    ESP_ERROR_CHECK(log_stream_init());
+
     // NVS required by WiFi driver and config storage
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -33,7 +39,8 @@ extern "C" void app_main(void)
     ESP_ERROR_CHECK(battery_monitor_init());
 
     // Background task: BOOT button gestures (hold = factory reset,
-    // double-tap in setup mode = cycle WiFi channel)
+    // single-tap = cycle an active AP's WiFi channel, double-tap = toggle
+    // the backup AP — see wifi_manager_toggle_fallback_ap())
     ESP_ERROR_CHECK(boot_button_start());
 
     // Connect to WiFi (blocks until connected or gives up)
