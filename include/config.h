@@ -59,11 +59,16 @@
 #define AUDIO_SOURCE_USB      1   // USB Audio Class (UAC 1.0) microphone, USB Host mode
 #define AUDIO_SOURCE_DEFAULT  AUDIO_SOURCE_I2S
 
-// Which I2S mic is wired up. Both use the same pins and wiring (L/R / SEL
-// tied to GND), but the SPH0645 clocks data out one BCLK early relative to
-// the Philips I2S standard, so it needs the MSB (left-justified) slot format.
+// Which I2S mic is wired up. All three use the same pins and wiring (L/R /
+// SEL tied to GND), but need different handling in i2s_mic.c: the SPH0645
+// clocks data out one BCLK early relative to the Philips I2S standard, so
+// it needs the MSB (left-justified) slot format; the ICS43434 uses Philips
+// bus timing like the INMP441 (same datasheet-documented timing), but a raw
+// DMA dump showed it lands its data in the other DMA slot than the INMP441
+// does — see the s_data_slot comment in i2s_mic.c.
 #define MIC_MODEL_INMP441     0
 #define MIC_MODEL_SPH0645     1
+#define MIC_MODEL_ICS43434    2
 #define MIC_MODEL_DEFAULT     MIC_MODEL_INMP441
 
 // =============================================================================

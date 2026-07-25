@@ -19,7 +19,7 @@ typedef struct {
     uint8_t  hpf_slope;      // 1-4 cascaded stages (6/12/18/24 dB per octave)
     uint8_t  hpf_depth;      // shelf attenuation in dB; 60 = full cut, 0 = bypass
     uint8_t  audio_source;   // AUDIO_SOURCE_I2S or AUDIO_SOURCE_USB
-    uint8_t  mic_model;      // MIC_MODEL_INMP441 or MIC_MODEL_SPH0645
+    uint8_t  mic_model;      // MIC_MODEL_INMP441, MIC_MODEL_SPH0645, or MIC_MODEL_ICS43434
     uint8_t  batt_chemistry; // 0=Li-ion/LiPo, 1=LiFePO4, 2=Custom
     uint8_t  batt_cells;     // 1-4 (1S-4S); ignored when batt_chemistry=Custom
     uint16_t batt_low_mv;    // pack-level threshold in mV — always the value

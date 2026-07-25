@@ -15,10 +15,14 @@ static i2s_chan_handle_t s_rx_chan = NULL;
 static audio_dsp_state_t s_dsp;
 static atomic_uint       s_dma_overflows = 0;
 // Which of the two duplicated slots i2s_channel_read() returns per frame
-// (see the comment in i2s_mic_read()) actually carries mic data. Empirically
-// verified via raw DMA dump: Philips format (bit_shift=true, INMP441) puts
-// it in the second slot; MSB format (bit_shift=false, SPH0645) puts it in
-// the first — the two slot configs differ in more than just bit timing.
+// (see the comment in i2s_mic_read()) actually carries mic data. Determined
+// empirically per model via raw DMA dump, not by Philips-vs-MSB slot config
+// alone: the SPH0645 (MSB format) and INMP441 (Philips format) landed in
+// different slots as expected, but the ICS43434 — also Philips format,
+// same bus timing as the INMP441 per its datasheet — landed in the same
+// slot as the SPH0645. Don't assume a new model's slot from its bus timing
+// alone; verify it the same way (see i2s_mic_read()'s temp-log approach in
+// git history for this file).
 static size_t s_data_slot = 1;
 
 static bool IRAM_ATTR on_recv_q_ovf(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
@@ -40,12 +44,15 @@ esp_err_t i2s_mic_init(void)
         return ret;
     }
 
-    // INMP441 follows the Philips I2S standard (data delayed one BCLK after
-    // the WS edge). The SPH0645 has a timing quirk — it clocks data out one
-    // BCLK early — which lines up with the MSB (left-justified) slot format
-    // instead. Same pins, same wiring (L/R / SEL to GND) for both.
+    // INMP441 and ICS43434 both follow the Philips I2S standard (data
+    // delayed one BCLK after the WS edge). The SPH0645 has a timing quirk —
+    // it clocks data out one BCLK early — which lines up with the MSB
+    // (left-justified) slot format instead. Same pins, same wiring (L/R /
+    // SEL to GND) for all three.
     bool sph = g_config.mic_model == MIC_MODEL_SPH0645;
-    s_data_slot = sph ? 0 : 1;
+    // Bus timing (Philips vs MSB) doesn't predict which DMA slot ends up
+    // with live data — see the comment on s_data_slot above.
+    s_data_slot = g_config.mic_model == MIC_MODEL_INMP441 ? 1 : 0;
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(g_config.sample_rate),
         .slot_cfg = sph ? (i2s_std_slot_config_t)
@@ -87,8 +94,10 @@ esp_err_t i2s_mic_init(void)
 
     audio_dsp_init(&s_dsp);
 
+    const char *model_name = sph ? "SPH0645"
+        : g_config.mic_model == MIC_MODEL_ICS43434 ? "ICS43434" : "INMP441";
     ESP_LOGI(TAG, "%s ready — %lu Hz mono, WS=%d SCK=%d SD=%d",
-             sph ? "SPH0645" : "INMP441",
+             model_name,
              (unsigned long)g_config.sample_rate, I2S_PIN_WS, I2S_PIN_SCK, I2S_PIN_SD);
     return ESP_OK;
 }

@@ -161,10 +161,11 @@ static const char *s_html =
     "<option value=\"0\"%s>I2S Microphone</option>"
     "<option value=\"1\"%s>USB Microphone</option>"
     "</select>"
-    "<div id=\"mmWrap\"><label class=\"tip\" data-tip=\"Which I2S MEMS mic is wired up. Both use the same pins (L/R or SEL tied to GND), but they need different bus timing. Pick the wrong one and you get silence or heavy distortion. The SPH0645 has a DC offset - enable the high-pass filter to remove it.\">I2S Mic Model</label>"
+    "<div id=\"mmWrap\"><label class=\"tip\" data-tip=\"Which I2S MEMS mic is wired up. All three use the same pins (L/R or SEL tied to GND), but they need different bus timing. Pick the wrong one and you get silence or heavy distortion. The ICS43434 uses the same timing as the INMP441. The SPH0645 has a DC offset - enable the high-pass filter to remove it.\">I2S Mic Model</label>"
     "<select name=\"mic_model\" id=\"mmSel\">"
     "<option value=\"0\"%s>INMP441</option>"
     "<option value=\"1\"%s>SPH0645</option>"
+    "<option value=\"2\"%s>ICS43434</option>"
     "</select></div>"
     "<label class=\"tip\" data-tip=\"Audio capture frequency. Higher = better quality but more CPU load. 16 kHz is enough for BirdNET-Go; 48 kHz is full studio quality.\">Sample Rate</label>"
     "<select name=\"sample_rate\" id=\"srSel\" onchange=\"drawHpf()\">"
@@ -689,6 +690,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.audio_source == AUDIO_SOURCE_USB ? " selected" : "",
         g_config.mic_model == MIC_MODEL_INMP441 ? " selected" : "",
         g_config.mic_model == MIC_MODEL_SPH0645 ? " selected" : "",
+        g_config.mic_model == MIC_MODEL_ICS43434 ? " selected" : "",
         g_config.sample_rate ==  8000 ? " selected" : "",
         g_config.sample_rate == 16000 ? " selected" : "",
         g_config.sample_rate == 22050 ? " selected" : "",
@@ -869,7 +871,7 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     get_field(body, "mic_model", val, sizeof(val));
     if (val[0]) {
         int v = atoi(val);
-        if (v == MIC_MODEL_INMP441 || v == MIC_MODEL_SPH0645)
+        if (v == MIC_MODEL_INMP441 || v == MIC_MODEL_SPH0645 || v == MIC_MODEL_ICS43434)
             g_config.mic_model = (uint8_t)v;
     }
 
