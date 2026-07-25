@@ -244,16 +244,45 @@ password: warbler32
   ```
    
 3. Browse to **`http://192.168.4.1/`**.
-4. Enter your home WiFi's SSID and password, then **Save & Reboot**.
+4. Click **Scan** next to the SSID field to list nearby networks and pick
+   yours from the dropdown — or just type the SSID by hand. Enter the
+   password, then **Save & Reboot**. Scan works here and on the normal
+   config page once connected, e.g. to switch to a different network later.
 
 The status LED blinks red (slowly) while in setup mode.
 
 > The setup AP automatically picks a quiet 2.4GHz channel (6 or 11) by
 > scanning for nearby networks first. If devices still won't join it reliably,
-> double-tap the board's BOOT button (two quick presses) to manually cycle the
-> AP to the next channel in `1 → 6 → 11 → ...` — the LED flashes white to
-> confirm. Only does anything while the device is broadcasting the setup AP. 
+> single-tap the board's BOOT button to manually cycle the AP to the next
+> channel in `1 → 6 → 11 → ...` — the LED flashes white to confirm. Only
+> does anything while the device is broadcasting an AP (setup or backup —
+> see [WiFi outage fallback](#wifi-outage-fallback) below).
 
+
+<br />
+<br />
+
+## WiFi outage fallback
+
+Once the device has joined its saved network successfully, a later drop is
+retried forever in the background rather than falling back to a setup AP —
+that would tear down an active RTSP stream for a hiccup that might clear up
+on its own in seconds. But if the outage doesn't clear, that same behavior
+would otherwise leave the device unreachable with no way to fix settings
+short of a factory reset.
+
+After a configurable timeout (**Diagnostics → Backup AP on WiFi Outage**,
+default 2 minutes, adjustable 1-30), the device brings up the same
+`Warbler32-Setup` network *alongside* its still-retrying WiFi connection —
+concurrent, not a replacement — so nothing about the reconnect attempts (or
+a stream that resumes once the network is back) is disturbed. Connect to it
+and browse to `http://192.168.4.1/` to check status or fix settings; it
+drops on its own the moment the saved network reconnects.
+
+You can also bring the backup AP up manually at any time — handy if you
+don't know or remember the device's IP/mDNS name — by double-tapping the
+BOOT button, even if WiFi is completely fine. Double-tap again to take it
+back down.
 
 <br />
 <br />
@@ -437,4 +466,12 @@ Two ways to wipe saved WiFi/audio settings and drop back into setup mode:
   on — GPIO0 is a strapping pin, so holding it during power-on puts the chip
   in USB download mode instead), press and hold the board's BOOT button for
   5 seconds. The status LED blinks orange while held; release early to
-  cancel. Useful if the device is unreachable on its saved network.
+  cancel. Useful if the device is unreachable on its saved network — though
+  try a [double-tap](#wifi-outage-fallback) first if you just want back in
+  without erasing your settings.
+
+The BOOT button also has two quick-tap gestures, both harmless to your saved
+settings: a **single tap** cycles an active AP's WiFi channel (setup or
+backup), and a **double tap** toggles the [backup AP](#wifi-outage-fallback)
+on or off. Both are no-ops if there's nothing for them to act on yet (e.g.
+single-tapping with no AP currently broadcasting).
