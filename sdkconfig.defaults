@@ -55,3 +55,12 @@ CONFIG_LWIP_MAX_SOCKETS=16
 # covers multiple interfaces/alt settings; enumeration fails with
 # "Configuration descriptor larger than control transfer max length".
 CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024
+
+# Default (4) truncates a UAC mic's discrete sample-rate list to the first 4
+# entries in descriptor order, silently dropping the rest. The TONOR TC30
+# (0d8c:0134) advertises 7 rates (8000/11025/16000/22050/32000/44100/48000);
+# with the default limit only the first 4 survive, so both the 44.1kHz and
+# 48kHz web UI options failed with ESP_ERR_NOT_SUPPORTED. Raised to fit the
+# full 6-option range this project's web UI offers (web_server.c), plus
+# headroom for other mics.
+CONFIG_UAC_FREQ_NUM_MAX=8
