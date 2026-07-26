@@ -32,6 +32,17 @@
 
 static const char *TAG = "web";
 
+// Logo shown at the bottom of the config page, served at GET /logo.png.
+// Plain generated C byte array (see logo_png.h's header comment for how to
+// regenerate it) rather than an EMBED_FILES/objcopy-based approach — no
+// filesystem on this device, and EMBED_FILES via CMake's own
+// idf_component_register() generates a source file under the CMake build
+// directory that PlatformIO's outer SCons layer then tries to *also*
+// process via a separate, broken path-resolution rule for this project's
+// structure, always failing at link time. A plain #include sidesteps that
+// entirely.
+#include "logo_png.h"
+
 // ---------------------------------------------------------------------------
 // HTML page — %% = literal %, format args listed in root_get_handler()
 // ---------------------------------------------------------------------------
@@ -43,7 +54,7 @@ static const char *s_html =
     "*{box-sizing:border-box}"
     "body{font-family:system-ui,sans-serif;background:#111827;color:#e5e7eb;margin:0;padding:16px}"
     "h1{color:#60a5fa;margin:0 0 4px}"
-    ".sub{color:#6b7280;font-size:13px;margin:0 0 20px}"
+    ".sub{color:#6b7280;font-size:13px;margin:0}"
     ".url{color:#34d399;font-family:monospace}"
     ".card{background:#1f2937;border-radius:8px;padding:16px;margin-bottom:16px}"
     "h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#9ca3af;margin:0 0 12px}"
@@ -84,20 +95,23 @@ static const char *s_html =
     ".statusStrip{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:#9ca3af;"
     "background:#1f2937;border-radius:8px;padding:10px 14px;margin-bottom:16px}"
     ".statusStrip b{color:#e5e7eb;font-weight:600}"
+    ".logo-banner{display:block;border-radius:8px;margin-bottom:12px}"
     "@media(max-width:700px){"
     ".layout{flex-direction:column}"
     ".tabnav{flex-direction:row;width:100%%;overflow-x:auto;padding-bottom:2px;gap:6px}"
     ".tabbtn{width:auto;white-space:nowrap;flex-shrink:0}"
+    ".logo-banner{margin-left:auto;margin-right:auto}"
     "}"
     "</style></head><body>"
-    "<div style=\"display:flex;justify-content:space-between;align-items:center\">"
-    "<h1>Warbler32</h1>"
+    "<img src=\"/logo.png?v=%s\" width=\"150\" height=\"150\" alt=\"Warbler32 logo\" class=\"logo-banner\">"
+    "<div style=\"display:flex;justify-content:flex-end;margin-bottom:12px\">"
     "<div class=\"battIcon\" id=\"battIcon\">"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
     "<div class=\"bar\"></div>"
-    "</div></div>"
+    "</div>"
+    "</div>"
     "%s"
     "<div class=\"layout\">"
     "<nav class=\"tabnav\">"
@@ -132,6 +146,9 @@ static const char *s_html =
     "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor. Shows an em dash if no INA219 is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
     "</div></div>"
+    "<div class=\"card\"><h2>Info</h2>"
+    "<p class=\"sub\" style=\"margin:0\">Stream: <span class=\"url\">rtsp://%s/audio</span></p>"
+    "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-device\">"
     "<form method=\"POST\" action=\"/save\">"
@@ -737,30 +754,52 @@ static void json_escape(const char *in, char *out, size_t outsz)
     out[o] = '\0';
 }
 
+// Guards against a stalled/degraded client blocking httpd's send indefinitely.
+// This server processes requests synchronously on a single worker task
+// (that's exactly why /listen and /logs detach into their own tasks for
+// their long-lived streams) — without a send timeout, ANY handler's
+// httpd_resp_send() can block on one bad connection (weak WiFi, a phone
+// that went to sleep mid-transfer) for the OS's default send timeout, which
+// can run to minutes, making the *entire* web UI unreachable for every
+// other client meanwhile. /status (polled every 2s) and /level (every
+// 150ms during monitoring) are hit constantly and are the most exposed,
+// but every simple synchronous handler needs this, not just those two.
+static void set_send_timeout(httpd_req_t *req, int sec)
+{
+    int fd = httpd_req_to_sockfd(req);
+    if (fd < 0) return;
+    struct timeval tv = { .tv_sec = sec, .tv_usec = 0 };
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
 // ---------------------------------------------------------------------------
 // GET / — serve config page
 // ---------------------------------------------------------------------------
 static esp_err_t root_get_handler(httpd_req_t *req)
 {
-    char status_line[256];
+    set_send_timeout(req, 2);
+
+    // Only rendered in the banner for AP/fallback mode, where it's an
+    // actionable notice worth seeing from any tab. In normal operation the
+    // banner shows nothing here — the stream URL itself lives in the
+    // Dashboard tab's Info card below, not on every tab.
+    char status_line[256] = "";
     if (wifi_manager_is_fallback_mode()) {
         snprintf(status_line, sizeof(status_line),
-            "<p class=\"sub\" style=\"color:#f59e0b\">WiFi unreachable &mdash; connect here to "
-            "check status or fix settings. Still retrying the saved network in the "
-            "background; this backup AP drops on its own once it reconnects.</p>");
+            "<p class=\"sub\" style=\"color:#f59e0b;margin-bottom:20px\">WiFi unreachable &mdash; "
+            "connect here to check status or fix settings. Still retrying the saved network "
+            "in the background; this backup AP drops on its own once it reconnects.</p>");
     } else if (wifi_manager_is_ap_mode()) {
         snprintf(status_line, sizeof(status_line),
-            "<p class=\"sub\" style=\"color:#f59e0b\">Setup Mode &mdash; enter your WiFi "
-            "network below, then Save.</p>");
-    } else {
-        char ip[16] = "0.0.0.0";
-        esp_netif_ip_info_t ip_info;
-        esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-        if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK)
-            snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ip_info.ip));
-        snprintf(status_line, sizeof(status_line),
-            "<p class=\"sub\">Stream: <span class=\"url\">rtsp://%s/audio</span></p>", ip);
+            "<p class=\"sub\" style=\"color:#f59e0b;margin-bottom:20px\">Setup Mode &mdash; enter "
+            "your WiFi network below, then Save.</p>");
     }
+
+    char ip[16] = "0.0.0.0";
+    esp_netif_ip_info_t ip_info;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif && esp_netif_get_ip_info(netif, &ip_info) == ESP_OK)
+        snprintf(ip, sizeof(ip), IPSTR, IP2STR(&ip_info.ip));
 
     // Escape before reflecting into the page — SSID/password can contain
     // almost any printable character (unlike device_name, which is already
@@ -778,7 +817,9 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     if (!buf) return ESP_ERR_NO_MEM;
 
     int len = snprintf(buf, bufsz, s_html,
+        app->version,
         status_line,
+        ip,
         name_esc,
         ssid_esc,
         pass_esc,
@@ -844,6 +885,8 @@ static void reboot_task(void *arg)
 
 static esp_err_t save_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     int body_len = req->content_len;
     if (body_len <= 0 || body_len > 1023) {
         // Never parse a truncated form: a field cut mid-value (e.g. a
@@ -1094,6 +1137,8 @@ static esp_err_t save_post_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t reboot_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     static const char resp[] =
         "<!DOCTYPE html><html><head>"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -1118,6 +1163,8 @@ static esp_err_t reboot_post_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t reset_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     app_config_factory_reset();
 
     static const char resp[] =
@@ -1156,6 +1203,8 @@ static esp_err_t ota_fail(httpd_req_t *req, char *buf,
 
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     const char *emsg = "Upload failed";
     int total = req->content_len;
 
@@ -1207,6 +1256,8 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t update_check_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     ota_check_result_t res;
     const char *emsg = "";
     char json[320];
@@ -1230,6 +1281,8 @@ static esp_err_t update_check_post_handler(httpd_req_t *req)
 
 static esp_err_t update_install_post_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     const char *emsg = "";
     char json[160];
     int len;
@@ -1246,6 +1299,8 @@ static esp_err_t update_install_post_handler(httpd_req_t *req)
 
 static esp_err_t update_progress_get_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     ota_progress_t p;
     ota_github_progress(&p);
 
@@ -1263,6 +1318,11 @@ static esp_err_t update_progress_get_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t level_get_handler(httpd_req_t *req)
 {
+    // Short timeout: polled every 150ms while the level monitor is running,
+    // so a stalled client needs to be noticed fast, not after the 2s this
+    // file uses elsewhere for one-shot page loads.
+    set_send_timeout(req, 1);
+
     char json[16];
     int pct = audio_pipeline_get_peak_pct();
     snprintf(json, sizeof(json), "{\"p\":%d}", pct);
@@ -1404,6 +1464,19 @@ out:
     vTaskDelete(NULL);
 }
 
+// ---------------------------------------------------------------------------
+// GET /logo.png — embedded firmware asset (see logo_png.h above).
+// ---------------------------------------------------------------------------
+static esp_err_t logo_get_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 2);
+
+    httpd_resp_set_type(req, "image/png");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=604800");
+    httpd_resp_send(req, (const char *)logo_png, (ssize_t)logo_png_len);
+    return ESP_OK;
+}
+
 static esp_err_t logs_get_handler(httpd_req_t *req)
 {
     httpd_req_t *async_req;
@@ -1429,6 +1502,8 @@ static esp_err_t logs_get_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t logs_download_get_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     char *buf = malloc(LOG_STREAM_BUF_BYTES);
     if (!buf) {
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
@@ -1451,6 +1526,11 @@ static esp_err_t logs_download_get_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t status_get_handler(httpd_req_t *req)
 {
+    // Short timeout: polled every 2s by every open tab (the dashboard's
+    // stPoll()), the single most-hit handler in this file — a stalled
+    // client here would block the whole web UI the fastest of anything.
+    set_send_timeout(req, 1);
+
     int rssi = 0;
     if (!wifi_manager_is_ap_mode()) {
         wifi_ap_record_t ap;
@@ -1516,6 +1596,8 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 // ---------------------------------------------------------------------------
 static esp_err_t wifi_scan_get_handler(httpd_req_t *req)
 {
+    set_send_timeout(req, 2);
+
     wifi_scan_result_t results[20];
     int count = wifi_manager_scan(results, 20);
 
@@ -1609,6 +1691,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_logs_download = {
         .uri = "/logs/download", .method = HTTP_GET, .handler = logs_download_get_handler,
     };
+    static const httpd_uri_t get_logo = {
+        .uri = "/logo.png", .method = HTTP_GET, .handler = logo_get_handler,
+    };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
     httpd_register_uri_handler(server, &get_level);
@@ -1623,6 +1708,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_wifi_scan);
     httpd_register_uri_handler(server, &get_logs);
     httpd_register_uri_handler(server, &get_logs_download);
+    httpd_register_uri_handler(server, &get_logo);
 
     if (wifi_manager_is_ap_mode()) {
         ESP_LOGI(TAG, "config UI: http://192.168.4.1/ (connect to \"%s\" first)", WIFI_AP_SSID);
