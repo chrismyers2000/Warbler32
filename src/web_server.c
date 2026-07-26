@@ -7,6 +7,7 @@
 #include "rtsp_server.h"
 #include "wifi_manager.h"
 #include "log_stream.h"
+#include "log_persist.h"
 #include "config.h"
 
 #include "esp_wifi.h"
@@ -302,9 +303,12 @@ static const char *s_html =
     "</form>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Live Log</h2>"
     "<button type=\"button\" id=\"logbtn\" onclick=\"toggleLogs()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 8px 10px 0\">Start Log Stream</button>"
-    "<button type=\"button\" onclick=\"location.href='/logs/download'\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 10px\">Download Log</button>"
+    "<button type=\"button\" onclick=\"location.href='/logs/download'\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 8px 10px 0\">Download Log</button>"
+    "<button type=\"button\" onclick=\"location.href='/logs/previous'\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 10px\">Download Previous Boot Log</button>"
     "<pre id=\"logOut\" style=\"background:#111827;border-radius:4px;padding:8px;height:240px;overflow-y:auto;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;margin:0\"></pre>"
-    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0\">Tails the device's serial log live &mdash; the same output you'd see over USB. Only one browser tab can stream it at a time.</p>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 12px\">Tails the device's serial log live &mdash; the same output you'd see over USB. Only one browser tab can stream it at a time.</p>"
+    "<label class=\"tip\" data-tip=\"Mirrors the live log to flash so it survives a reboot &mdash; the specific thing you want after an unexpected reset. Off by default; the device doesn't touch flash for this unless you turn it on, and it rotates the previous session's log out of the way each time it's (re-)enabled.\">Persist Log to Flash</label>"
+    "<button type=\"button\" id=\"persistbtn\" onclick=\"togglePersist()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">%s</button>"
     "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-firmware\">"
@@ -527,6 +531,16 @@ static const char *s_html =
     "}).catch(function(){logStop();});"
     "})();"
     "}).catch(function(e){logStop();if(e&&e.name!=='AbortError')alert('Log stream failed: '+e);});"
+    "};"
+    "window.togglePersist=function(){"
+    "var b=$('persistbtn');"
+    "b.disabled=true;"
+    "fetch('/logs/persist/toggle',{method:'POST'}).then(function(r){return r.json();})"
+    ".then(function(j){"
+    "b.disabled=false;"
+    "if(j.error){alert('Could not change log persistence: '+j.error);return;}"
+    "b.textContent=j.enabled?'Disable Persistent Logging':'Enable Persistent Logging';"
+    "}).catch(function(){b.disabled=false;alert('Request failed \\u2014 connection error.');});"
     "};"
     "window.doChk=function(){"
     "var b=$('chkbtn'),st=$('chkst');"
@@ -812,7 +826,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *app = esp_app_get_description();
 
-    const size_t bufsz = 32768;
+    const size_t bufsz = 40960;
     char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
@@ -859,6 +873,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.wifi_fallback_enabled ? " selected" : "",
         !g_config.wifi_fallback_enabled ? " selected" : "",
         (int)g_config.wifi_fallback_timeout_min,
+        g_config.log_persist_enabled ? "Disable Persistent Logging" : "Enable Persistent Logging",
         app->version, ota_board_variant(), app->date);
 
     // snprintf returns the would-be length: if the page outgrows the buffer,
@@ -1522,6 +1537,74 @@ static esp_err_t logs_download_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /logs/previous — the log from before the last reboot (see
+// log_persist.h). Only present if persistence was enabled for at least
+// part of a prior session; a friendly message otherwise, not an error.
+// ---------------------------------------------------------------------------
+static esp_err_t logs_previous_get_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 2);
+
+    FILE *fp = fopen(LOG_PERSIST_PREVIOUS_PATH, "r");
+    if (!fp) {
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_send(req, "No previous boot log available yet.", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    fseek(fp, 0, SEEK_END);
+    long size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (size < 0) size = 0;
+
+    char *buf = malloc((size_t)size);
+    size_t n = 0;
+    if (size == 0 || buf) {
+        n = buf ? fread(buf, 1, (size_t)size, fp) : 0;
+    }
+    fclose(fp);
+
+    if (size > 0 && !buf) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Content-Disposition",
+                       "attachment; filename=\"warbler32-previous-log.txt\"");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, buf, n);
+
+    free(buf);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
+// POST /logs/persist/toggle — flip whether the live log is mirrored to
+// flash (see log_persist.h). Runtime-only action button, not part of the
+// settings form — applies immediately, no reboot.
+// ---------------------------------------------------------------------------
+static esp_err_t logs_persist_toggle_post_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 2);
+
+    bool want_enabled = !g_config.log_persist_enabled;
+    esp_err_t ret = log_persist_set_enabled(want_enabled);
+
+    char json[96];
+    int len;
+    if (ret != ESP_OK)
+        len = snprintf(json, sizeof(json), "{\"error\":\"%s\"}", esp_err_to_name(ret));
+    else
+        len = snprintf(json, sizeof(json), "{\"enabled\":%s}",
+                       g_config.log_persist_enabled ? "true" : "false");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // GET /status — device diagnostics for the web UI (and anything else)
 // ---------------------------------------------------------------------------
 static esp_err_t status_get_handler(httpd_req_t *req)
@@ -1631,7 +1714,7 @@ esp_err_t web_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable  = true;
-    cfg.max_uri_handlers  = 16;
+    cfg.max_uri_handlers  = 20;
     cfg.stack_size        = 12288;  // TLS handshake runs in-handler for /update/check
     // Default (7) + 3 reserved-for-httpd-internals == the entire global
     // CONFIG_LWIP_MAX_SOCKETS budget, leaving nothing for the RTSP
@@ -1691,6 +1774,12 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_logs_download = {
         .uri = "/logs/download", .method = HTTP_GET, .handler = logs_download_get_handler,
     };
+    static const httpd_uri_t get_logs_previous = {
+        .uri = "/logs/previous", .method = HTTP_GET, .handler = logs_previous_get_handler,
+    };
+    static const httpd_uri_t post_logs_persist_toggle = {
+        .uri = "/logs/persist/toggle", .method = HTTP_POST, .handler = logs_persist_toggle_post_handler,
+    };
     static const httpd_uri_t get_logo = {
         .uri = "/logo.png", .method = HTTP_GET, .handler = logo_get_handler,
     };
@@ -1708,6 +1797,8 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_wifi_scan);
     httpd_register_uri_handler(server, &get_logs);
     httpd_register_uri_handler(server, &get_logs_download);
+    httpd_register_uri_handler(server, &get_logs_previous);
+    httpd_register_uri_handler(server, &post_logs_persist_toggle);
     httpd_register_uri_handler(server, &get_logo);
 
     if (wifi_manager_is_ap_mode()) {

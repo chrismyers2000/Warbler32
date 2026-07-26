@@ -8,6 +8,7 @@
 #include "rtsp_server.h"
 #include "pipeline_watchdog.h"
 #include "log_stream.h"
+#include "log_persist.h"
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -30,6 +31,12 @@ extern "C" void app_main(void)
 
     // Load runtime config from NVS (falls back to config.h defaults)
     ESP_ERROR_CHECK(app_config_load());
+
+    // If left enabled from a prior session, resume mirroring the live log
+    // to flash — must come after app_config_load() above, since it reads
+    // g_config.log_persist_enabled. Never fails boot: a SPIFFS mount
+    // problem just leaves persistence unavailable this session.
+    ESP_ERROR_CHECK(log_persist_init());
 
     // Status LED: start before WiFi so we show "connecting" immediately
     ESP_ERROR_CHECK(status_led_init());

@@ -186,11 +186,28 @@
 // serial connection. Log text is far lower-volume than PCM audio, so this
 // is much smaller than PIPELINE_BUF_BYTES above; 8KB holds several seconds
 // of typical boot-time logging as initial backlog when a tab first
-// connects. Single reader: only one Diagnostics tab is expected to have
-// the log stream open at a time.
+// connects. Two readers: one Diagnostics tab tailing live, plus one
+// reserved for the log_persist.h flush-to-flash task (see below) — either
+// can be in use independent of the other.
 // =============================================================================
 #define LOG_STREAM_BUF_BYTES   8192
-#define LOG_STREAM_MAX_READERS 1
+#define LOG_STREAM_MAX_READERS 2
+
+// =============================================================================
+// Persisted log (see log_persist.h) — mirrors the live log to the unused
+// SPIFFS partition (default_8MB.csv) across reboots, off by default and
+// toggled live from the Diagnostics tab so the device isn't writing to
+// flash unless a debugging session actually wants it. 256KB comfortably
+// fits the 1.5MB partition; once current.log hits this size the flush task
+// just stops writing until re-enabled, rather than rotating mid-session.
+// =============================================================================
+#define LOG_PERSIST_MAX_BYTES 262144
+
+// Background flush task that drains the log_stream reader into flash —
+// only created while persistence is enabled, not always running.
+#define TASK_LOG_PERSIST_STACK    3072
+#define TASK_LOG_PERSIST_PRIORITY 2
+#define TASK_LOG_PERSIST_CORE     1
 
 // =============================================================================
 // NeoPixel status LED (WS2812B on GPIO 48 = onboard RGB LED)

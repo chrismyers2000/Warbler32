@@ -29,6 +29,8 @@ typedef struct {
     uint8_t  watchdog_enabled;  // reboot if the audio pipeline stalls (see pipeline_watchdog.h)
     uint8_t  wifi_fallback_enabled;    // bring up the backup AP after a long WiFi outage (see WIFI_FALLBACK_*)
     uint8_t  wifi_fallback_timeout_min; // minutes disconnected before the backup AP comes up
+    uint8_t  log_persist_enabled; // mirror the live log to flash across reboots (see log_persist.h) — off
+                                   // by default; persisted so leaving it on survives the crash it's meant to catch
 } app_config_t;
 
 extern app_config_t g_config;
