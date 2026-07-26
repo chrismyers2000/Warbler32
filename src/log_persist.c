@@ -59,8 +59,17 @@ static void flush_task(void *arg)
 {
     char buf[512];
     while (!s_stop_requested) {
+        // Once the cap is hit there's nothing left to write — sleep instead
+        // of draining log_stream_read() in a hot loop. That call only
+        // blocks when the ring buffer is empty; with steady log traffic
+        // it returns immediately, which would otherwise spin this task
+        // with no yield at all.
+        if (s_written >= LOG_PERSIST_MAX_BYTES) {
+            vTaskDelay(pdMS_TO_TICKS(500));
+            continue;
+        }
         size_t got = log_stream_read(s_reader, buf, sizeof(buf), 500);
-        if (got == 0 || s_written >= LOG_PERSIST_MAX_BYTES) continue;
+        if (got == 0) continue;
         fwrite(buf, 1, got, s_fp);
         fflush(s_fp);
         s_written += got;

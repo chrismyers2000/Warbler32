@@ -83,7 +83,20 @@ static uint8_t pick_least_congested_channel(void)
     int counts[2] = {0, 0};
 
     wifi_scan_config_t scan_cfg = {0};  // all channels, active scan, default dwell time
-    if (esp_wifi_scan_start(&scan_cfg, true /* block */) != ESP_OK) {
+    // Same ESP_ERR_WIFI_STATE race as wifi_manager_scan() below (STA busy
+    // connecting), and actually more likely to hit here: this is called
+    // from enter_fallback_ap_mode(), which wifi_fallback_task() invokes
+    // specifically after a prolonged outage — exactly when STA is busiest
+    // retrying esp_wifi_connect() on every disconnect event. Without a
+    // retry this silently defaulted to channel 6 almost every time instead
+    // of actually surveying.
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) vTaskDelay(pdMS_TO_TICKS(300));
+        ret = esp_wifi_scan_start(&scan_cfg, true /* block */);
+        if (ret == ESP_OK || ret != ESP_ERR_WIFI_STATE) break;
+    }
+    if (ret != ESP_OK) {
         ESP_LOGW(TAG, "channel scan failed, defaulting to channel %d", candidates[0]);
         return candidates[0];
     }
