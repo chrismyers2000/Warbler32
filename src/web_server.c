@@ -1614,11 +1614,16 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     // client here would block the whole web UI the fastest of anything.
     set_send_timeout(req, 1);
 
+    // No wifi_manager_is_ap_mode() guard here on purpose: that's true for
+    // both the plain setup AP (no STA connection ever, so this just fails
+    // and leaves rssi blank below) and the backup AP during an outage,
+    // where STA is still present and often still trying to reconnect —
+    // RSSI is exactly the kind of thing worth seeing while troubleshooting
+    // that outage, so don't blank it out just because an AP happens to
+    // also be up.
     int rssi = 0;
-    if (!wifi_manager_is_ap_mode()) {
-        wifi_ap_record_t ap;
-        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
-    }
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
 
     // Battery percent is a simple linear estimate between the configured
     // Low/Full voltages — good enough for a status display, not lab-grade.
