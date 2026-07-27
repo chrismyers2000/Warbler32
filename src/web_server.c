@@ -235,13 +235,21 @@ static const char *s_html =
     "Gain and filter settings apply instantly; Input Source and Sample Rate changes reboot the device.</p>"
     "</form>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Audio Monitor</h2>"
-    "<canvas id=\"lv\" width=\"600\" height=\"72\""
-    " style=\"width:100%%;height:72px;border-radius:4px;background:#111827\"></canvas>"
-    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 4px\">Peak level &mdash; green &lt;55%%, amber &lt;80%%, red = clipping.</p>"
-    "<button type=\"button\" onclick=\"toggleMon(this)\""
-    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Start Monitor</button>"
+    "<div style=\"display:flex;gap:6px;width:100%%\">"
+    "<div style=\"display:flex;flex-direction:column;justify-content:space-between;"
+    "font-size:10px;color:#6b7280;height:440px;padding:2px 0\">"
+    "<span>24k</span><span>18k</span><span>12k</span><span>6k</span><span>0</span></div>"
+    "<canvas id=\"lv\" width=\"300\" height=\"440\""
+    " style=\"flex:1;min-width:0;height:440px;border-radius:4px;background:#111827\"></canvas>"
+    "</div>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 4px\">Live spectrogram and audio preview, 0&ndash;24 kHz, scrolling right to left.</p>"
+    "<div style=\"display:flex;flex-wrap:wrap;align-items:center;gap:8px\">"
     "<button type=\"button\" id=\"lsnbtn\" onclick=\"toggleListen()\""
-    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 0 8px\">Listen</button>"
+    " style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">Listen</button>"
+    "<button type=\"button\" id=\"mutebtn\" onclick=\"toggleMute()\""
+    " style=\"background:#374151;width:auto;padding:8px 12px;font-size:13px;margin:0\">Mute</button>"
+    "<input type=\"range\" id=\"volIn\" min=\"0\" max=\"100\" value=\"100\" oninput=\"setVol(this.value)\""
+    " style=\"width:120px;max-width:40%%;margin:0\">"
     "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-hardware\">"
@@ -355,21 +363,36 @@ static const char *s_html =
     "</div>"
     "<script>"
     "(function(){"
-    "var c=document.getElementById('lv'),x=c.getContext('2d'),h=[],t=null;"
-    "function draw(){"
-    "var W=c.width,H=c.height,bw=Math.floor(W/50)-1;"
-    "x.fillStyle='#111827';x.fillRect(0,0,W,H);"
-    "for(var i=0;i<h.length;i++){"
-    "x.fillStyle=h[i]>80?'#ef4444':h[i]>55?'#f59e0b':'#34d399';"
-    "x.fillRect(i*(bw+1),H-h[i]*H/100,bw,h[i]*H/100);"
-    "}}"
-    "window.toggleMon=function(b){"
-    "if(t){clearInterval(t);t=null;h=[];draw();b.textContent='Start Monitor';}"
-    "else{t=setInterval(function(){"
-    "fetch('/level').then(function(r){return r.json();})"
-    ".then(function(j){h.push(j.p);if(h.length>50)h.shift();draw();});"
-    "},150);b.textContent='Stop Monitor';}"
-    "};"
+    "var c=document.getElementById('lv'),x=c.getContext('2d');"
+    "var monAn=null,monRaf=null,monFreq=null,monCol=null;"
+    // dark blue -> cyan -> green -> yellow -> red, precomputed once so the
+    // per-frame paint is a plain array lookup, not a CSS color-string parse
+    "var monPal=(function(){var p=new Uint8ClampedArray(256*4);"
+    "for(var v=0;v<256;v++){"
+    "var h=240-240*v/255,l=(8+42*v/255)/100,cc=1-Math.abs(2*l-1),"
+    "xx=cc*(1-Math.abs((h/60)%%2-1)),m=l-cc/2,r,g,b;"
+    "if(h<60){r=cc;g=xx;b=0;}else if(h<120){r=xx;g=cc;b=0;}"
+    "else if(h<180){r=0;g=cc;b=xx;}else{r=0;g=xx;b=cc;}"
+    "var i=v*4;p[i]=(r+m)*255;p[i+1]=(g+m)*255;p[i+2]=(b+m)*255;p[i+3]=255;"
+    "}return p;})();"
+    // scroll the waterfall 1px left, then paint a fresh column of frequency
+    // bins (0Hz at the bottom, Nyquist at the top) at the right edge; reuses
+    // monFreq/monCol across frames and does a single putImageData instead of
+    // one fillStyle+fillRect per row, which was expensive enough (up to a
+    // few hundred calls, 60x/sec) to starve the fetch reader on the same JS
+    // thread and show up as visible stutter
+    "function monPaint(){"
+    "if(!monAn)return;"
+    "monAn.getByteFrequencyData(monFreq);"
+    "var n=monFreq.length,H=monCol.height,cd=monCol.data;"
+    "x.drawImage(c,1,0,c.width-1,H,0,0,c.width-1,H);"
+    "for(var y=0;y<H;y++){"
+    "var bin=Math.min(n-1,Math.floor((1-y/H)*n)),p=monFreq[bin]*4,o=y*4;"
+    "cd[o]=monPal[p];cd[o+1]=monPal[p+1];cd[o+2]=monPal[p+2];cd[o+3]=255;"
+    "}"
+    "x.putImageData(monCol,c.width-1,0);"
+    "monRaf=requestAnimationFrame(monPaint);"
+    "}"
     "function stFmt(s){"
     "var d=Math.floor(s/86400),h=Math.floor(s%%86400/3600),m=Math.floor(s%%3600/60);"
     "return d>0?d+'d '+h+'h':h>0?h+'h '+m+'m':m+'m '+s%%60+'s';"
@@ -453,16 +476,34 @@ static const char *s_html =
     "}"
     "g.stroke();"
     "};"
-    "var lsnCtx=null,lsnAbort=null,lsnEl=null;"
+    "var lsnCtx=null,lsnAbort=null,lsnEl=null,monGain=null,monVol=1,monMuted=false;"
     "function lsnStop(){"
+    "if(monRaf){cancelAnimationFrame(monRaf);monRaf=null;}"
     "if(lsnAbort){try{lsnAbort.abort();}catch(e){}lsnAbort=null;}"
     "if(lsnEl){try{lsnEl.pause();lsnEl.srcObject=null;}catch(e){}lsnEl=null;}"
     "if(lsnCtx){try{lsnCtx.close();}catch(e){}lsnCtx=null;}"
+    "monAn=null;monFreq=null;monCol=null;monGain=null;"
     "$('lsnbtn').textContent='Listen';"
     "}"
+    // volume/mute only touch monGain, which sits after the analyser, so the
+    // spectrogram keeps showing the true incoming signal even when muted
+    "window.setVol=function(v){"
+    "monVol=v/100;"
+    "if(monGain&&!monMuted)monGain.gain.value=monVol;"
+    "};"
+    "window.toggleMute=function(){"
+    "monMuted=!monMuted;"
+    "$('mutebtn').textContent=monMuted?'Unmute':'Mute';"
+    "$('mutebtn').style.background=monMuted?'#dc2626':'#374151';"
+    "if(monGain)monGain.gain.value=monMuted?0:monVol;"
+    "};"
     "window.toggleListen=function(){"
     "if(lsnAbort){lsnStop();return;}"
     "var b=$('lsnbtn');"
+    "var pr=window.devicePixelRatio||1,rc=c.getBoundingClientRect();"
+    "var bw=Math.round(rc.width*pr),bh=Math.round(rc.height*pr);"
+    "if(bw>0&&bh>0){c.width=bw;c.height=bh;}"
+    "x.fillStyle='#111827';x.fillRect(0,0,c.width,c.height);"
     // iOS only unmutes audio objects created synchronously inside the tap
     // gesture, so the whole output path (context + media element) is built
     // here, before any network I/O. Routing through an <audio> element
@@ -471,6 +512,10 @@ static const char *s_html =
     "lsnCtx=new (window.AudioContext||window.webkitAudioContext)();"
     "if(lsnCtx.resume)lsnCtx.resume();"
     "var dst=lsnCtx.createMediaStreamDestination();"
+    "monAn=lsnCtx.createAnalyser();monAn.fftSize=2048;monAn.smoothingTimeConstant=0.4;"
+    "monFreq=new Uint8Array(monAn.frequencyBinCount);monCol=x.createImageData(1,c.height);"
+    "monGain=lsnCtx.createGain();monGain.gain.value=monMuted?0:monVol;"
+    "monAn.connect(monGain);monGain.connect(dst);"
     "lsnEl=document.createElement('audio');"
     "lsnEl.setAttribute('playsinline','');"
     "lsnEl.srcObject=dst.stream;"
@@ -482,6 +527,7 @@ static const char *s_html =
     "var sr=parseInt(r.headers.get('X-Sample-Rate'))||48000;"
     "var next=0,carry=new Uint8Array(0),rd=r.body.getReader();"
     "b.textContent='Stop';"
+    "monRaf=requestAnimationFrame(monPaint);"
     "(function pump(){"
     "rd.read().then(function(res){"
     "if(res.done||!lsnCtx){lsnStop();return;}"
@@ -497,7 +543,7 @@ static const char *s_html =
     // Safari historically mishandles it anyway)
     "var ab=lsnCtx.createBuffer(1,n,sr);"
     "if(ab.copyToChannel)ab.copyToChannel(f,0);else ab.getChannelData(0).set(f);"
-    "var s=lsnCtx.createBufferSource();s.buffer=ab;s.connect(dst);"
+    "var s=lsnCtx.createBufferSource();s.buffer=ab;s.connect(monAn);"
     "if(next<lsnCtx.currentTime+0.05)next=lsnCtx.currentTime+0.3;"
     "s.start(next);next+=n/sr;"
     "}"
@@ -1329,25 +1375,6 @@ static esp_err_t update_progress_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
-// GET /level — audio peak level for the browser monitor
-// ---------------------------------------------------------------------------
-static esp_err_t level_get_handler(httpd_req_t *req)
-{
-    // Short timeout: polled every 150ms while the level monitor is running,
-    // so a stalled client needs to be noticed fast, not after the 2s this
-    // file uses elsewhere for one-shot page loads.
-    set_send_timeout(req, 1);
-
-    char json[16];
-    int pct = audio_pipeline_get_peak_pct();
-    snprintf(json, sizeof(json), "{\"p\":%d}", pct);
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_send(req, json, strlen(json));
-    return ESP_OK;
-}
-
-// ---------------------------------------------------------------------------
 // GET /listen — live PCM preview stream (raw big-endian L16, chunked)
 //
 // The stream runs until the browser disconnects, so it must not occupy the
@@ -1743,9 +1770,6 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t post_save = {
         .uri = "/save", .method = HTTP_POST, .handler = save_post_handler,
     };
-    static const httpd_uri_t get_level = {
-        .uri = "/level", .method = HTTP_GET, .handler = level_get_handler,
-    };
     static const httpd_uri_t post_reboot = {
         .uri = "/reboot", .method = HTTP_POST, .handler = reboot_post_handler,
     };
@@ -1790,7 +1814,6 @@ esp_err_t web_server_start(void)
     };
     httpd_register_uri_handler(server, &get_root);
     httpd_register_uri_handler(server, &post_save);
-    httpd_register_uri_handler(server, &get_level);
     httpd_register_uri_handler(server, &post_reboot);
     httpd_register_uri_handler(server, &post_reset);
     httpd_register_uri_handler(server, &post_ota);
