@@ -252,6 +252,7 @@ static const char *s_html =
     " style=\"width:120px;max-width:40%%;margin:0\">"
     "</div>"
     "</div>"
+    "</div>"
     "<div class=\"tab-panel\" id=\"tab-hardware\">"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>LED</h2>"
