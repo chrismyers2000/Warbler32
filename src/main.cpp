@@ -7,6 +7,8 @@
 #include "audio_pipeline.h"
 #include "rtsp_server.h"
 #include "pipeline_watchdog.h"
+#include "auto_reboot.h"
+#include "time_sync.h"
 #include "log_stream.h"
 #include "log_persist.h"
 
@@ -56,10 +58,21 @@ extern "C" void app_main(void)
     // Config web UI on port 80
     ESP_ERROR_CHECK(web_server_start());
 
+    // Background: optional fixed-schedule reboot at a configured local time,
+    // independent of device health — see auto_reboot.h. Off by default;
+    // harmless to start even in setup-AP mode since it just no-ops until
+    // NTP has synced (never possible without a real WAN connection).
+    ESP_ERROR_CHECK(auto_reboot_start());
+
     // Skip audio/RTSP while broadcasting the setup AP: nothing can stream
     // yet anyway, so there's no reason to spend the I2S/PSRAM/CPU budget
     // until the device is actually on a real network.
     if (!wifi_manager_is_ap_mode()) {
+        // No RTC battery, so every boot starts at the Jan 1 1970 epoch until
+        // this lands — needed for real timestamps in the log viewer and for
+        // auto_reboot_start() above to mean anything.
+        ESP_ERROR_CHECK(time_sync_start());
+
         // Start I2S capture and ring buffer
         ESP_ERROR_CHECK(audio_pipeline_start());
 

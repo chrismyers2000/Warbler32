@@ -38,6 +38,14 @@ void wifi_manager_toggle_fallback_ap(void);
 // from the web UI live, without a reboot.
 void wifi_manager_apply_tx_power(void);
 
+// Pushes g_config.roaming_rssi_threshold_dbm into the roaming app's live
+// config (see CONFIG_ESP_WIFI_ENABLE_ROAMING_APP in sdkconfig.defaults) —
+// the RSSI the current AP has to drop below before a roam to a stronger AP
+// of the same network is considered. Safe to call any time after
+// wifi_manager_start(); used both at startup and to apply a web UI change
+// live, without a reboot.
+void wifi_manager_apply_roaming_rssi(void);
+
 typedef struct {
     char    ssid[33];
     int8_t  rssi;

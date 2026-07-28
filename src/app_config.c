@@ -35,6 +35,11 @@ esp_err_t app_config_load(void)
     g_config.wifi_fallback_enabled     = WIFI_FALLBACK_DEFAULT_ENABLED;
     g_config.wifi_fallback_timeout_min = WIFI_FALLBACK_TIMEOUT_MIN_DEFAULT;
     g_config.log_persist_enabled       = 0;
+    g_config.auto_reboot_enabled  = AUTO_REBOOT_DEFAULT_ENABLED;
+    g_config.auto_reboot_time_min = AUTO_REBOOT_TIME_MIN_DEFAULT;
+    strlcpy(g_config.ntp_server, NTP_SERVER_DEFAULT, sizeof(g_config.ntp_server));
+    g_config.utc_offset_min = UTC_OFFSET_MIN_DEFAULT;
+    g_config.roaming_rssi_threshold_dbm = ROAMING_RSSI_THRESHOLD_DBM_DEFAULT;
 
     nvs_handle_t h;
     esp_err_t ret = nvs_open(NVS_NS, NVS_READONLY, &h);
@@ -71,6 +76,12 @@ esp_err_t app_config_load(void)
     nvs_get_u8 (h, "wfb_enable",  &g_config.wifi_fallback_enabled);
     nvs_get_u8 (h, "wfb_min",     &g_config.wifi_fallback_timeout_min);
     nvs_get_u8 (h, "log_persist", &g_config.log_persist_enabled);
+    nvs_get_u8 (h, "ar_enable",   &g_config.auto_reboot_enabled);
+    nvs_get_u16(h, "ar_time_min", &g_config.auto_reboot_time_min);
+    len = sizeof(g_config.ntp_server);
+    nvs_get_str(h, "ntp_server",  g_config.ntp_server,    &len);
+    nvs_get_i16(h, "utc_off_min", &g_config.utc_offset_min);
+    nvs_get_i8 (h, "roam_rssi",   &g_config.roaming_rssi_threshold_dbm);
 
     nvs_close(h);
 
@@ -108,6 +119,11 @@ esp_err_t app_config_save(void)
     nvs_set_u8 (h, "wfb_enable",  g_config.wifi_fallback_enabled);
     nvs_set_u8 (h, "wfb_min",     g_config.wifi_fallback_timeout_min);
     nvs_set_u8 (h, "log_persist", g_config.log_persist_enabled);
+    nvs_set_u8 (h, "ar_enable",   g_config.auto_reboot_enabled);
+    nvs_set_u16(h, "ar_time_min", g_config.auto_reboot_time_min);
+    nvs_set_str(h, "ntp_server",  g_config.ntp_server);
+    nvs_set_i16(h, "utc_off_min", g_config.utc_offset_min);
+    nvs_set_i8 (h, "roam_rssi",   g_config.roaming_rssi_threshold_dbm);
     nvs_commit(h);
     nvs_close(h);
 

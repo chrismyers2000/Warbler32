@@ -34,6 +34,44 @@ CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
 
+# ---- WiFi roaming (mesh AP hand-off) ----
+# ESP-IDF's station driver has no built-in roaming: once associated to an AP
+# it stays there until a hard disconnect (deauth/beacon-loss timeout), even
+# if a much stronger AP of the same SSID is sitting right next to it. On a
+# multi-AP mesh (e.g. UniFi) that's a real failure mode — a unit can land on
+# a far/weak AP at boot and then get stuck there indefinitely with no
+# self-recovery, looking "connected" (LED and all) while barely passing any
+# traffic. Confirmed live on the .122 field unit: it associated to an AP at
+# -75dBm while a -42dBm AP of the same network was available, and never
+# generated a single WIFI_EVENT_STA_DISCONNECTED while reachability collapsed.
+# Espressif's own roaming app (in-tree, Kconfig-gated as "experimental")
+# fixes this: it monitors RSSI/periodically scans and forces a reassociation
+# to a meaningfully stronger AP of the same network, using 802.11v BTM where
+# the AP supports it and falling back to a plain disconnect+reconnect
+# otherwise. Needs no application code — see esp_wifi/wifi_apps/roaming_app.
+# Everything below CONFIG_ESP_WIFI_ENABLE_ROAMING_APP is left at Espressif's
+# own defaults (Kconfig.roaming) except:
+# - The low-RSSI trigger itself: the stock -60dBm was roaming too eagerly (a
+#   roam briefly interrupts any active RTSP stream, so it shouldn't fire over
+#   a merely mediocre-but-fine link) — raised to -75dBm at the Kconfig level
+#   (the actual live value is app_config.h's roaming_rssi_threshold_dbm,
+#   user-adjustable in the web UI's WiFi card; this is only the boot-time
+#   seed before that's ever been saved to NVS — see
+#   wifi_manager_apply_roaming_rssi()).
+# - The periodic scan monitor: a *second*, independent trigger that ran on
+#   its own -50dBm/30s schedule regardless of the low-RSSI setting above —
+#   disabled entirely so the low-RSSI trigger is the only thing that can
+#   ever start a roam. Note this changes the real `struct roam_config`
+#   layout (scan_interval/scan_rssi_threshold/scan_rssi_diff only exist
+#   when this is on) — wifi_manager.c's mirrored copy of that struct must
+#   be kept in sync with this setting, or roam_get/set_config_params()
+#   silently misaligns every field after it.
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_ESP_WIFI_11KV_SUPPORT=y
+CONFIG_ESP_WIFI_ENABLE_ROAMING_APP=y
+CONFIG_ESP_WIFI_ROAMING_LOW_RSSI_THRESHOLD=-75
+CONFIG_ESP_WIFI_ROAMING_PERIODIC_SCAN_MONITOR=n
+
 # ---- Compiler ----
 # Disable -Werror so C++ flags passed to C files don't break the build
 CONFIG_COMPILER_WARNINGS_EXTRA=n

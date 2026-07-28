@@ -31,6 +31,11 @@ typedef struct {
     uint8_t  wifi_fallback_timeout_min; // minutes disconnected before the backup AP comes up
     uint8_t  log_persist_enabled; // mirror the live log to flash across reboots (see log_persist.h) — off
                                    // by default; persisted so leaving it on survives the crash it's meant to catch
+    uint8_t  auto_reboot_enabled;   // reboot once a day at auto_reboot_time_min regardless of health (see auto_reboot.h)
+    uint16_t auto_reboot_time_min;  // local time of day to reboot, minutes since midnight (0-1439)
+    char     ntp_server[64];        // NTP server hostname (see time_sync.h)
+    int16_t  utc_offset_min;        // fixed UTC offset in minutes, no DST (e.g. -300 = EST, 330 = IST)
+    int8_t   roaming_rssi_threshold_dbm; // roam once the current AP's RSSI drops below this (see wifi_manager_apply_roaming_rssi())
 } app_config_t;
 
 extern app_config_t g_config;

@@ -8,6 +8,7 @@
 #include "wifi_manager.h"
 #include "log_stream.h"
 #include "log_persist.h"
+#include "time_sync.h"
 #include "config.h"
 
 #include "esp_wifi.h"
@@ -30,6 +31,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <stdatomic.h>
+#include <math.h>
 
 static const char *TAG = "web";
 
@@ -170,11 +172,13 @@ static const char *s_html =
     "<label class=\"tip\" data-tip=\"Maximum WiFi transmit power. Lower values reduce range but can also reduce RF noise coupling into nearby mic wiring/power rails if audio sounds noisy despite a stable connection. 20 dBm = full power.\">TX Power &nbsp;<span class=\"val\" id=\"txv\">%d</span> dBm</label>"
     "<input type=\"range\" name=\"tx_power\" min=\"8\" max=\"20\" value=\"%d\""
     " oninput=\"txv.textContent=this.value\">"
+    "<label class=\"tip\" data-tip=\"On a multi-AP network with the same WiFi name (e.g. a mesh), roam to a stronger AP once the current one's signal drops below this. Lower (more negative) = only roam when the link is actually in trouble; higher = roam more eagerly. Each roam briefly interrupts any active RTSP stream (a few seconds), so avoid setting this too high on a network with mediocre-but-workable coverage.\">Roaming RSSI Trigger (dBm)</label>"
+    "<input type=\"number\" name=\"roaming_rssi_threshold_dbm\" min=\"-99\" max=\"-30\" value=\"%d\">"
     "</div>"
     "<input type=\"hidden\" name=\"tab\" value=\"device\">"
     "<button type=\"submit\">Save</button>"
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0;text-align:center\">"
-    "TX Power applies instantly; Name, SSID, and Password changes reboot the device.</p>"
+    "TX Power and Roaming RSSI Trigger apply instantly; Name, SSID, and Password changes reboot the device.</p>"
     "</form>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-audio\">"
@@ -291,7 +295,23 @@ static const char *s_html =
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-diagnostics\">"
     "<form method=\"POST\" action=\"/save\">"
-    "<div class=\"card\"><h2>Diagnostics</h2>"
+    "<div class=\"card\"><h2>Time</h2>"
+    "<label class=\"tip\" data-tip=\"NTP server used to set the device's clock. There's no battery-backed RTC, so every boot starts at Jan 1 1970 until this lands.\">NTP Server</label>"
+    "<input type=\"text\" name=\"ntp_server\" maxlength=\"63\" value=\"%s\">"
+    "<label class=\"tip\" data-tip=\"Fixed offset from UTC for displayed timestamps and the Scheduled Reboot time below. No daylight saving - re-set by 1 hour twice a year if your location observes DST.\">UTC Offset (hours)</label>"
+    "<input type=\"number\" name=\"utc_offset_hours\" min=\"-12\" max=\"14\" step=\"0.25\" value=\"%g\">"
+    "<label class=\"tip\" data-tip=\"The device's current idea of the local time, using the offset above. \\u201cnot synced\\u201d means NTP hasn't landed yet - check WiFi/internet reachability, or press Sync Now.\">Device Time</label>"
+    "<p id=\"devtime\" style=\"margin:0 0 10px\">%s</p>"
+    "<button type=\"button\" id=\"ntpbtn\" onclick=\"doNtpSync()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 14px\">Sync Now</button>"
+    "<label class=\"tip\" data-tip=\"Reboots the device once a day at the local time below, regardless of health, as a blunt catch-all for slow leak/hang bugs the Diagnostics tab's Stall Watchdog doesn't cover (it only catches the audio pipeline going fully silent). Interrupts any active stream when it fires. Never fires before this device has a synced clock.\">Scheduled Reboot</label>"
+    "<select name=\"auto_reboot_enabled\">"
+    "<option value=\"1\"%s>Enabled</option>"
+    "<option value=\"0\"%s>Disabled</option>"
+    "</select>"
+    "<label class=\"tip\" data-tip=\"Local time of day to perform the scheduled reboot.\">Reboot Time</label>"
+    "<input type=\"time\" name=\"auto_reboot_time\" value=\"%02d:%02d\">"
+    "</div>"
+    "<div class=\"card\" style=\"margin-top:16px\"><h2>Diagnostics</h2>"
     "<label class=\"tip\" data-tip=\"Reboots the device if the audio reader task ever stops producing data entirely for about a minute (a wedged driver call, not just a quiet/dead mic - see Mic Health above for that). Off means a stall like that needs a manual power cycle to clear.\">Stall Watchdog</label>"
     "<select name=\"watchdog_enabled\">"
     "<option value=\"1\"%s>Enabled</option>"
@@ -626,6 +646,17 @@ static const char *s_html =
     "},1000);"
     "});"
     "};"
+    "window.doNtpSync=function(){"
+    "var b=$('ntpbtn'),dt=$('devtime');"
+    "b.disabled=true;b.textContent='Syncing\\u2026';"
+    "fetch('/ntp/sync',{method:'POST'}).then(function(r){return r.json();})"
+    ".then(function(j){"
+    "b.disabled=false;b.textContent='Sync Now';"
+    "if(j.error){alert(j.error);return;}"
+    "dt.textContent=j.time;"
+    "}).catch(function(){b.disabled=false;b.textContent='Sync Now';"
+    "alert('Sync failed \\u2014 connection error.');});"
+    "};"
     "window.doScan=function(){"
     "var b=$('scanBtn'),st=$('scanSt'),sel=$('scanSel');"
     "b.disabled=true;st.textContent='Scanning\\u2026';sel.style.display='none';"
@@ -866,10 +897,14 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     // almost any printable character (unlike device_name, which is already
     // restricted to alnum+hyphen at save time), so this is output encoding,
     // not input filtering.
-    char name_esc[200], ssid_esc[400], pass_esc[400];
+    char name_esc[200], ssid_esc[400], pass_esc[400], ntp_esc[128];
     html_escape(g_config.device_name,   name_esc, sizeof(name_esc));
     html_escape(g_config.wifi_ssid,     ssid_esc, sizeof(ssid_esc));
     html_escape(g_config.wifi_password, pass_esc, sizeof(pass_esc));
+    html_escape(g_config.ntp_server,    ntp_esc,  sizeof(ntp_esc));
+
+    char device_time[32];
+    time_sync_format_local(device_time, sizeof(device_time));
 
     const esp_app_desc_t *app = esp_app_get_description();
 
@@ -885,6 +920,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         ssid_esc,
         pass_esc,
         (int)g_config.wifi_tx_power_dbm, (int)g_config.wifi_tx_power_dbm,
+        (int)g_config.roaming_rssi_threshold_dbm,
         g_config.audio_source == AUDIO_SOURCE_I2S ? " selected" : "",
         g_config.audio_source == AUDIO_SOURCE_USB ? " selected" : "",
         g_config.mic_model == MIC_MODEL_INMP441 ? " selected" : "",
@@ -915,6 +951,12 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.batt_low_mv  / 1000.0,
         g_config.batt_nom_mv  / 1000.0,
         g_config.batt_full_mv / 1000.0,
+        ntp_esc,
+        g_config.utc_offset_min / 60.0,
+        device_time,
+        g_config.auto_reboot_enabled ? " selected" : "",
+        !g_config.auto_reboot_enabled ? " selected" : "",
+        (int)(g_config.auto_reboot_time_min / 60), (int)(g_config.auto_reboot_time_min % 60),
         g_config.watchdog_enabled ? " selected" : "",
         !g_config.watchdog_enabled ? " selected" : "",
         g_config.wifi_fallback_enabled ? " selected" : "",
@@ -989,6 +1031,12 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     strlcpy(old_name, g_config.device_name,   sizeof(old_name));
     strlcpy(old_ssid, g_config.wifi_ssid,     sizeof(old_ssid));
     strlcpy(old_pass, g_config.wifi_password, sizeof(old_pass));
+
+    // Not part of reboot_needed below (NTP server applies live, no reboot) —
+    // just used after saving to decide whether time_sync_start() needs to
+    // re-run against the new server.
+    char old_ntp_server[sizeof(g_config.ntp_server)];
+    strlcpy(old_ntp_server, g_config.ntp_server, sizeof(old_ntp_server));
 
     char val[128];
 
@@ -1125,6 +1173,32 @@ static esp_err_t save_post_handler(httpd_req_t *req)
             g_config.wifi_fallback_timeout_min = (uint8_t)v;
     }
 
+    get_field(body, "roaming_rssi_threshold_dbm", val, sizeof(val));
+    if (val[0]) {
+        int v = atoi(val);
+        if (v >= ROAMING_RSSI_THRESHOLD_DBM_MIN && v <= ROAMING_RSSI_THRESHOLD_DBM_MAX)
+            g_config.roaming_rssi_threshold_dbm = (int8_t)v;
+    }
+
+    get_field(body, "auto_reboot_enabled", val, sizeof(val));
+    if (val[0]) g_config.auto_reboot_enabled = atoi(val) ? 1 : 0;
+
+    get_field(body, "auto_reboot_time", val, sizeof(val));
+    if (val[0]) {
+        int h, m;
+        if (sscanf(val, "%d:%d", &h, &m) == 2 && h >= 0 && h <= 23 && m >= 0 && m <= 59)
+            g_config.auto_reboot_time_min = (uint16_t)(h * 60 + m);
+    }
+
+    get_field(body, "ntp_server", val, sizeof(val));
+    if (val[0]) strlcpy(g_config.ntp_server, val, sizeof(g_config.ntp_server));
+
+    get_field(body, "utc_offset_hours", val, sizeof(val));
+    if (val[0]) {
+        double v = atof(val);
+        if (v >= -12 && v <= 14) g_config.utc_offset_min = (int16_t)lround(v * 60);
+    }
+
     // Which tab's form posted this — used only to send the browser back to
     // that tab after the reload, so saving e.g. Audio settings doesn't dump
     // the user back at the top of the page. Whitelisted before reflecting
@@ -1150,6 +1224,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     free(body);
     app_config_save();
     wifi_manager_apply_tx_power();
+    wifi_manager_apply_roaming_rssi();
+
+    // Re-point the SNTP client at the new server. Only meaningful with a
+    // real WAN uplink — skip while broadcasting the setup/backup AP, same
+    // gate time_sync_start() itself uses at boot in main.cpp.
+    if (strcmp(old_ntp_server, g_config.ntp_server) != 0 && !wifi_manager_is_ap_mode())
+        time_sync_start();
 
     bool reboot_needed =
         strcmp(old_name, g_config.device_name)   != 0 ||
@@ -1336,6 +1417,31 @@ static esp_err_t update_check_post_handler(httpd_req_t *req)
     }
     // snprintf returns the would-be length — never send past the buffer
     if (len >= (int)sizeof(json)) len = sizeof(json) - 1;
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
+// POST /ntp/sync — force an immediate NTP resync, for the Diagnostics tab's
+// Sync Now button. Blocks the one httpd worker for up to the wait below,
+// same tradeoff /wifi/scan already makes for a bounded, user-initiated action.
+// ---------------------------------------------------------------------------
+static esp_err_t ntp_sync_post_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 6);
+
+    esp_err_t ret = time_sync_now(pdMS_TO_TICKS(5000));
+
+    char json[96];
+    int len;
+    if (ret != ESP_OK) {
+        len = snprintf(json, sizeof(json), "{\"error\":\"Sync failed: %s\"}", esp_err_to_name(ret));
+    } else {
+        char t[32];
+        time_sync_format_local(t, sizeof(t));
+        len = snprintf(json, sizeof(json), "{\"ok\":true,\"time\":\"%s\"}", t);
+    }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, json, len);
     return ESP_OK;
@@ -1798,6 +1904,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_wifi_scan = {
         .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler,
     };
+    static const httpd_uri_t post_ntp_sync = {
+        .uri = "/ntp/sync", .method = HTTP_POST, .handler = ntp_sync_post_handler,
+    };
     static const httpd_uri_t get_logs = {
         .uri = "/logs", .method = HTTP_GET, .handler = logs_get_handler,
     };
@@ -1824,6 +1933,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_upd_progress);
     httpd_register_uri_handler(server, &get_listen);
     httpd_register_uri_handler(server, &get_wifi_scan);
+    httpd_register_uri_handler(server, &post_ntp_sync);
     httpd_register_uri_handler(server, &get_logs);
     httpd_register_uri_handler(server, &get_logs_download);
     httpd_register_uri_handler(server, &get_logs_previous);

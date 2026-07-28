@@ -32,6 +32,17 @@
 #define WIFI_TX_POWER_DBM_MIN      8
 #define WIFI_TX_POWER_DBM_MAX      20
 
+// WiFi roaming trigger (see CONFIG_ESP_WIFI_ENABLE_ROAMING_APP in
+// sdkconfig.defaults and wifi_manager_apply_roaming_rssi()) — roam to a
+// stronger AP of the same network once the current one's RSSI drops below
+// this. Matches sdkconfig.defaults' CONFIG_ESP_WIFI_ROAMING_LOW_RSSI_THRESHOLD
+// so first-boot behavior (before any NVS value exists) is consistent with
+// what a user later sees/edits in the web UI. Range matches Kconfig.roaming's
+// stated valid range for this same setting.
+#define ROAMING_RSSI_THRESHOLD_DBM_DEFAULT -75
+#define ROAMING_RSSI_THRESHOLD_DBM_MIN      -99
+#define ROAMING_RSSI_THRESHOLD_DBM_MAX      -30
+
 // Backup AP: once a saved network has been joined successfully at least
 // once, a later drop retries forever in the background rather than
 // replacing STA with the setup AP (see wifi_manager.c) — that would tear
@@ -151,6 +162,31 @@
 #define OTA_GH_ATTEMPTS        3
 #define OTA_GH_RETRY_DELAY_MS  3000
 
+// Optional scheduled reboot (see auto_reboot.h) — reboots the device once a
+// day at a configured local time regardless of device health, as a blunt
+// mitigation for slow leak/hang bugs that don't trip PIPELINE_WATCHDOG_*
+// above (that one only catches the audio pipeline going fully silent; this
+// catches everything else, at the cost of interrupting an active stream once
+// a day). Off by default. Needs TIME_SYNC_* below to know the local time of
+// day at all — never fires before the first successful NTP sync. User-
+// toggleable via the web UI (app_config.h auto_reboot_enabled).
+#define AUTO_REBOOT_DEFAULT_ENABLED    0
+#define AUTO_REBOOT_TIME_MIN_DEFAULT   (3 * 60)  // 03:00 local
+#define AUTO_REBOOT_CHECK_INTERVAL_MS  60000
+
+// NTP time sync (see time_sync.h) — the device has no RTC battery, so every
+// boot starts at the Jan 1 1970 epoch until this lands. Needed for the local
+// timestamps in the Diagnostics log viewer and for AUTO_REBOOT_* above to
+// mean anything. No DST support: UTC offset is a fixed user-set value (web
+// UI app_config.h utc_offset_min), not a timezone database lookup — simplest
+// thing that actually satisfies "reboot at 3am local," re-set twice a year
+// by hand if the deployment observes DST.
+#define NTP_SERVER_DEFAULT      "pool.ntp.org"
+#define UTC_OFFSET_MIN_DEFAULT  0
+// Treat the system clock as synced once it's past this year — cheaply rules
+// out the pre-sync 1970 epoch default without needing extra state tracking.
+#define TIME_SYNC_SANE_YEAR     2024
+
 // =============================================================================
 // RTSP / RTP
 // =============================================================================
@@ -253,6 +289,11 @@
 #define TASK_WIFI_FALLBACK_STACK     3072
 #define TASK_WIFI_FALLBACK_PRIORITY  2
 #define TASK_WIFI_FALLBACK_CORE      1
+
+// Background scheduled-reboot task (see AUTO_REBOOT_* above)
+#define TASK_AUTO_REBOOT_STACK     3072
+#define TASK_AUTO_REBOOT_PRIORITY  2
+#define TASK_AUTO_REBOOT_CORE      1
 
 // =============================================================================
 // Battery monitor (INA219 I2C voltage sensor) — optional. If no INA219 is

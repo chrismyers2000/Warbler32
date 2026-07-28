@@ -18,6 +18,39 @@
 
 static const char *TAG = "wifi";
 
+// Mirrors `struct roam_config` from Espressif's roaming app
+// (esp_wifi/wifi_apps/roaming_app/include/esp_roaming.h) so its RSSI
+// threshold can be changed at runtime from the web UI. That header isn't
+// reachable via a normal #include — the roaming_app component only exposes
+// it to esp_wifi's own sources (PRIV_INCLUDE_DIRS), not to application code
+// — but roam_get/set_config_params() are still real symbols linked into the
+// esp_wifi library whenever CONFIG_ESP_WIFI_ENABLE_ROAMING_APP is set (see
+// sdkconfig.defaults), so redeclaring the same layout here and calling them
+// directly works. This is a private ESP-IDF API with no stability
+// guarantee: field order/count must stay byte-for-byte identical to the
+// real struct — check esp_roaming.h again after any ESP-IDF upgrade, or any
+// change to the CONFIG_ESP_WIFI_ROAMING_* Kconfig options in
+// sdkconfig.defaults, before trusting this still lines up. In particular,
+// scan_interval/scan_rssi_threshold/scan_rssi_diff only exist in the real
+// struct when CONFIG_ESP_WIFI_ROAMING_PERIODIC_SCAN_MONITOR is on — it's
+// off in our build (see sdkconfig.defaults), so they're omitted here too.
+struct roam_config {
+    uint8_t backoff_time;
+    bool low_rssi_roam_trigger;
+    int8_t low_rssi_threshold;
+    uint8_t rssi_threshold_reduction_offset;
+    bool scan_monitor;
+    bool legacy_roam_enabled;
+    uint8_t btm_retry_cnt;
+    bool btm_roaming_enabled;
+    bool rrm_monitor;
+    uint8_t rrm_monitor_time;
+    int8_t rrm_monitor_rssi_threshold;
+    wifi_scan_config_t scan_config;
+};
+extern esp_err_t roam_get_config_params(struct roam_config *config);
+extern esp_err_t roam_set_config_params(struct roam_config *config);
+
 // Set once we're either connected to a real network or broadcasting the
 // setup AP — either way, wifi_manager_start() can stop waiting.
 #define WIFI_READY_BIT BIT0
@@ -341,6 +374,22 @@ void wifi_manager_apply_tx_power(void)
         ESP_LOGW(TAG, "esp_wifi_set_max_tx_power failed: %s", esp_err_to_name(ret));
 }
 
+void wifi_manager_apply_roaming_rssi(void)
+{
+    struct roam_config cfg;
+    esp_err_t ret = roam_get_config_params(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "roam_get_config_params failed: %s", esp_err_to_name(ret));
+        return;
+    }
+    cfg.low_rssi_threshold = g_config.roaming_rssi_threshold_dbm;
+    ret = roam_set_config_params(&cfg);
+    if (ret == ESP_OK)
+        ESP_LOGI(TAG, "roaming RSSI trigger set to %d dBm", g_config.roaming_rssi_threshold_dbm);
+    else
+        ESP_LOGW(TAG, "roam_set_config_params failed: %s", esp_err_to_name(ret));
+}
+
 uint8_t wifi_manager_cycle_ap_channel(void)
 {
     if (!s_ap_mode) return 0;
@@ -360,7 +409,18 @@ static void event_handler(void *arg, esp_event_base_t base,
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         if (!s_want_ap) esp_wifi_connect();
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_ever_connected) {
+        wifi_event_sta_disconnected_t *disconn = (wifi_event_sta_disconnected_t *)event_data;
+        if (disconn->reason == WIFI_REASON_ROAMING) {
+            // The roaming app's own disconnect handler (registered
+            // separately, see sdkconfig.defaults) is already reconnecting
+            // this on its own as part of a deliberate hop to a stronger AP
+            // of the same network — nothing to do here. Treating it like a
+            // real outage would race our esp_wifi_connect() below against
+            // the specific-BSSID one it just issued, and would spuriously
+            // flip the LED / start the backup-AP outage clock for what's
+            // really a sub-second planned hop, not a drop.
+            ESP_LOGI(TAG, "roaming to a stronger AP...");
+        } else if (s_ever_connected) {
             // Runtime drop after a successful boot connection — keep
             // retrying indefinitely rather than falling back to the setup
             // AP, which would tear down STA and kill the running stream.
@@ -463,6 +523,15 @@ esp_err_t wifi_manager_start(void)
         // the web UI explicitly supports blank-password open networks.
         wifi_cfg.sta.threshold.authmode =
             g_config.wifi_password[0] == '\0' ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+        // Default WIFI_FAST_SCAN stops at the first AP matching the SSID,
+        // not the strongest one — on a multi-AP mesh network (same SSID,
+        // several BSSIDs) that can land the very first connection on a far,
+        // weak AP purely by scan order. Scan every channel and pick by
+        // RSSI instead; the roaming app (CONFIG_ESP_WIFI_ENABLE_ROAMING_APP,
+        // sdkconfig.defaults) takes over from here to correct course later
+        // if the link degrades, but starting on the best AP avoids the gap.
+        wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+        wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg));
         ESP_LOGI(TAG, "connecting to \"%s\"...", g_config.wifi_ssid);
@@ -474,6 +543,12 @@ esp_err_t wifi_manager_start(void)
     // configured TX power ceiling now rather than waiting for STA to fully
     // associate, since the setup AP's own beacon/handshake benefits too.
     wifi_manager_apply_tx_power();
+
+    // The roaming app (see CONFIG_ESP_WIFI_ENABLE_ROAMING_APP) self-inits
+    // during the esp_wifi_init() call above with the sdkconfig.defaults
+    // compile-time RSSI threshold — override it with whatever's actually
+    // saved, in case the user has changed it from the web UI default.
+    wifi_manager_apply_roaming_rssi();
 
     if (s_ap_mode) xEventGroupSetBits(s_wifi_event_group, WIFI_READY_BIT);
 
