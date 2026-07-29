@@ -318,3 +318,28 @@
 #define BATTERY_DEFAULT_LOW_MV       3300
 #define BATTERY_DEFAULT_NOMINAL_MV   3700
 #define BATTERY_DEFAULT_FULL_MV      4200
+
+// =============================================================================
+// MPPT_18W_A04 solar charge controller monitor (see mppt_monitor.h). No
+// public datasheet for this board exists; its protocol was reverse-
+// engineered from captured UART output — it sends a short burst of an
+// AT-style line ("AT+BATTLVL=<percent>,<charging 0/1>\r\n") right at its
+// own power-on, then goes quiet for good (no periodic reporting, confirmed
+// by a 10-minute idle capture), at 9600 baud, 8N1. Uses UART1 (not
+// UART0/console — this board's console actually
+// runs over classic UART0 on GPIO43/44, bridged to USB by an onboard chip;
+// the "no external USB-UART needed" comment above is wrong for this pin
+// pair). GPIO44 is NOT free: wiring the MPPT there puts its TX output in
+// direct contention with the console bridge chip's TX line on the same
+// node. Using GPIO1 instead — plain GPIO, no strapping role, not used
+// anywhere else in this firmware. RX only: the MPPT's TX line feeds this
+// pin, nothing is transmitted back, so TX is left unconnected
+// (UART_PIN_NO_CHANGE).
+#define MPPT_UART_PORT       UART_NUM_1
+#define MPPT_UART_RX_GPIO    1
+#define MPPT_UART_BAUD       9600
+#define MPPT_UART_BUF_SIZE   256
+
+#define TASK_MPPT_STACK      3072
+#define TASK_MPPT_PRIORITY   2
+#define TASK_MPPT_CORE       1

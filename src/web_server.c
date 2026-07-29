@@ -3,6 +3,7 @@
 #include "audio_pipeline.h"
 #include "mic_health.h"
 #include "battery_monitor.h"
+#include "mppt_monitor.h"
 #include "pipeline_watchdog.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
@@ -147,7 +148,7 @@ static const char *s_html =
     "<div><label class=\"tip\" data-tip=\"Samples the I2S driver overwrote at the DMA level before the reader task could pull them out - a lower-level drop than Audio Drops above, which only counts packets lost once they reach the streaming ring buffer. Always 0 on the USB mic.\">DMA Overflows</label><span class=\"val\" id=\"stDma\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
-    "<div><label class=\"tip\" data-tip=\"Live voltage from the optional INA219 battery monitor. Shows an em dash if no INA219 is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Battery level. Shows percentage and charge state from the optional MPPT solar charge controller if one is detected, otherwise live voltage from the optional INA219 battery monitor. Shows an em dash if neither is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
     "</div></div>"
     "<div class=\"card\"><h2>Info</h2>"
     "<p class=\"sub\" style=\"margin:0\">Stream: <span class=\"url\">rtsp://%s/audio</span></p>"
@@ -440,7 +441,13 @@ static const char *s_html =
     "else{sw.textContent=swM.textContent='STALLED '+stFmt(j.wd_stall);sw.style.color=swM.style.color='#f87171';}"
     "var sb=document.getElementById('stBatt'),sbM=document.getElementById('stBattM');"
     "var bi=document.getElementById('battIcon');"
-    "if(!j.batt_present){sb.textContent=sbM.textContent='\\u2013';sb.style.color=sbM.style.color='';bi.style.display='none';}"
+    "if(j.mppt_present){"
+    "var mtxt=j.mppt_pct+'%%'+(j.mppt_charging?' \\u26a1':'');"
+    "sb.textContent=sbM.textContent=mtxt;sb.style.color=sbM.style.color='';"
+    "bi.style.display='flex';bi.classList.remove('low');"
+    "var filled=Math.round(j.mppt_pct/10),bars=bi.querySelectorAll('.bar');"
+    "for(var k=0;k<bars.length;k++)bars[k].classList.toggle('filled',k<filled);"
+    "}else if(!j.batt_present){sb.textContent=sbM.textContent='\\u2013';sb.style.color=sbM.style.color='';bi.style.display='none';}"
     "else{var btxt=(j.batt_mv/1000).toFixed(2)+' V ('+j.batt_pct+'%%)'"
     "+(j.batt_low?' LOW':'');sb.textContent=sbM.textContent=btxt;"
     "sb.style.color=sbM.style.color=j.batt_low?'#f87171':'';"
@@ -1773,7 +1780,11 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     }
     bool batt_low = batt_present && batt_mv < g_config.batt_low_mv;
 
-    char json[480];
+    bool    mppt_present  = mppt_monitor_present();
+    uint8_t mppt_pct       = mppt_monitor_percent();
+    bool    mppt_charging  = mppt_monitor_charging();
+
+    char json[560];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
@@ -1781,6 +1792,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         "\"mic\":%d,\"mic_silent\":%u,\"mic_present\":%d,"
         "\"wd_enabled\":%d,\"wd_stall\":%u,"
         "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
+        "\"mppt_present\":%d,\"mppt_pct\":%d,\"mppt_charging\":%d,"
         "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
@@ -1797,6 +1809,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         audio_pipeline_is_active() ? 1 : 0,
         g_config.watchdog_enabled ? 1 : 0, (unsigned)pipeline_watchdog_stall_secs(),
         batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
+        mppt_present ? 1 : 0, mppt_pct, mppt_charging ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 
     // snprintf returns the would-be length — never send past the buffer
