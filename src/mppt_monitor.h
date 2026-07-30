@@ -39,8 +39,8 @@ bool mppt_monitor_present(void);
 // Last reported battery percentage (0-100). 0 if never read.
 uint8_t mppt_monitor_percent(void);
 
-// Last reported charging flag. Assumed polarity (nonzero = charging) —
-// confirm against real charge/no-charge conditions before relying on it.
+// Last reported charging flag (nonzero = charging). Polarity confirmed
+// against real charge/no-charge conditions.
 bool mppt_monitor_charging(void);
 
 #ifdef __cplusplus
