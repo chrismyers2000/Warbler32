@@ -4,6 +4,7 @@
 #include "mic_health.h"
 #include "battery_monitor.h"
 #include "mppt_monitor.h"
+#include "battery_history.h"
 #include "pipeline_watchdog.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
@@ -109,7 +110,7 @@ static const char *s_html =
     "</style></head><body>"
     "<img src=\"/logo.png?v=%s\" width=\"150\" height=\"150\" alt=\"Warbler32 logo\" class=\"logo-banner\">"
     "<div style=\"display:flex;justify-content:flex-end;margin-bottom:12px\">"
-    "<div class=\"battIcon\" id=\"battIcon\">"
+    "<div class=\"battIcon\" id=\"battIcon\" onclick=\"goToBattHistory()\" style=\"cursor:pointer\">"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
     "<div class=\"bar\"></div><div class=\"bar\"></div><div class=\"bar\"></div>"
@@ -134,7 +135,7 @@ static const char *s_html =
     "<span>Streaming <b id=\"stStrM\">&ndash;</b></span>"
     "<span>Mic <b id=\"stMicM\">&ndash;</b></span>"
     "<span>Watchdog <b id=\"stWdM\">&ndash;</b></span>"
-    "<span>Battery <b id=\"stBattM\">&ndash;</b></span>"
+    "<span>Battery <b id=\"stBattM\" onclick=\"goToBattHistory()\" style=\"cursor:pointer\">&ndash;</b></span>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-dashboard\">"
     "<div class=\"card\"><h2>Status</h2>"
@@ -148,7 +149,7 @@ static const char *s_html =
     "<div><label class=\"tip\" data-tip=\"Samples the I2S driver overwrote at the DMA level before the reader task could pull them out - a lower-level drop than Audio Drops above, which only counts packets lost once they reach the streaming ring buffer. Always 0 on the USB mic.\">DMA Overflows</label><span class=\"val\" id=\"stDma\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches the raw mic signal for a flatline (dead mic, broken wire). SILENT means no signal movement for 20+ seconds - the status LED also blinks magenta. A healthy mic's self-noise never trips this, even in a quiet room.\">Mic Health</label><span class=\"val\" id=\"stMic\">&ndash;</span></div>"
     "<div><label class=\"tip\" data-tip=\"Watches whether the audio reader task is producing data at all. STALLED counts up toward an automatic reboot; OFF means the Diagnostics setting below has this disabled.\">Watchdog</label><span class=\"val\" id=\"stWd\">&ndash;</span></div>"
-    "<div><label class=\"tip\" data-tip=\"Battery level. Shows percentage and charge state from the optional MPPT solar charge controller if one is detected, otherwise live voltage from the optional INA219 battery monitor. Shows an em dash if neither is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\">&ndash;</span></div>"
+    "<div><label class=\"tip\" data-tip=\"Battery level. Shows percentage and charge state from the optional MPPT solar charge controller if one is detected, otherwise live voltage from the optional INA219 battery monitor. Shows an em dash if neither is wired up. See the icon next to the page title for an at-a-glance level.\">Battery</label><span class=\"val\" id=\"stBatt\" onclick=\"goToBattHistory()\" style=\"cursor:pointer\">&ndash;</span></div>"
     "</div></div>"
     "<div class=\"card\"><h2>Info</h2>"
     "<p class=\"sub\" style=\"margin:0\">Stream: <span class=\"url\">rtsp://%s/audio</span></p>"
@@ -344,6 +345,13 @@ static const char *s_html =
     "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 12px\">Tails the device's serial log live &mdash; the same output you'd see over USB. Only one browser tab can stream it at a time.</p>"
     "<label class=\"tip\" data-tip=\"Mirrors the live log to flash so it survives a reboot &mdash; the specific thing you want after an unexpected reset. Off by default; the device doesn't touch flash for this unless you turn it on, and it rotates the previous session's log out of the way each time it's (re-)enabled.\">Persist Log to Flash</label>"
     "<button type=\"button\" id=\"persistbtn\" onclick=\"togglePersist()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0\">%s</button>"
+    "</div>"
+    "<div class=\"card\" style=\"margin-top:16px\" id=\"battHistCard\"><h2>Battery History</h2>"
+    "<canvas id=\"bh\" width=\"600\" height=\"200\""
+    " style=\"width:100%%;height:200px;border-radius:4px;background:#111827\"></canvas>"
+    "<p style=\"font-size:11px;color:#6b7280;margin:6px 0 0\">Last 24 hours of battery/MPPT percentage (blue line) "
+    "and charging state (green shading), sampled once a minute. Empty if neither an MPPT nor an INA219 battery "
+    "monitor has ever been detected.</p>"
     "</div>"
     "</div>"
     "<div class=\"tab-panel\" id=\"tab-firmware\">"
@@ -690,6 +698,41 @@ static const char *s_html =
     "else{st.textContent='No networks found.';}"
     "}).catch(function(){b.disabled=false;st.textContent='Scan failed \\u2014 connection error.';});"
     "};"
+    "window.goToBattHistory=function(){"
+    "showTab('diagnostics');"
+    "var c=$('battHistCard');if(c)c.scrollIntoView({behavior:'smooth',block:'center'});"
+    "};"
+    // Battery/MPPT percentage (blue line) with charging periods shaded green
+    // behind it. Points come from /battery/history oldest-first, each with
+    // age in seconds before now — age 0 is the right edge, 86400 (24h) is
+    // the left edge, so the x-axis reads consistently left=past, right=now
+    // regardless of how many samples actually exist yet.
+    "window.drawBattHistory=function(){"
+    "var c=$('bh');if(!c)return;var g=c.getContext('2d');"
+    "var pr=window.devicePixelRatio||1,rc=c.getBoundingClientRect();"
+    "var bw=Math.round(rc.width*pr),bh2=Math.round(rc.height*pr);"
+    "if(bw>0&&(c.width!=bw||c.height!=bh2)){c.width=bw;c.height=bh2;}"
+    "var W=c.width,H=c.height;"
+    "g.fillStyle='#111827';g.fillRect(0,0,W,H);"
+    "function fx(age){return W*(1-age/86400);}"
+    "function fy(p){return H-(H*p/100);}"
+    "g.strokeStyle='#1f2937';g.fillStyle='#4b5563';g.font=(10*pr)+'px monospace';g.lineWidth=pr;"
+    "[0,50,100].forEach(function(p){var y=fy(p);"
+    "g.beginPath();g.moveTo(0,y);g.lineTo(W,y);g.stroke();"
+    "g.fillText(p+'%%',4*pr,p===100?y+10*pr:y-3*pr);});"
+    "fetch('/battery/history').then(function(r){return r.json();}).then(function(j){"
+    "var pts=(j.points||[]).slice().sort(function(a,b){return b.a-a.a;});"
+    "if(!pts.length){g.fillStyle='#6b7280';g.font=(12*pr)+'px sans-serif';"
+    "g.fillText('No data yet \\u2014 needs an MPPT or INA219 battery monitor detected.',10*pr,20*pr);return;}"
+    "g.fillStyle='rgba(52,211,153,0.18)';"
+    "for(var i=0;i<pts.length-1;i++){if(pts[i].c){"
+    "var x0=fx(pts[i].a),x1=fx(pts[i+1].a);g.fillRect(Math.min(x0,x1),0,Math.abs(x1-x0)+1,H);"
+    "}}"
+    "g.strokeStyle='#60a5fa';g.lineWidth=2*pr;g.beginPath();"
+    "pts.forEach(function(pt,i){var x=fx(pt.a),y=fy(pt.p);i===0?g.moveTo(x,y):g.lineTo(x,y);});"
+    "g.stroke();"
+    "}).catch(function(){});"
+    "};"
     "window.pickScan=function(){"
     "var sel=$('scanSel');"
     "if(sel.value)$('ssidIn').value=sel.value;"
@@ -760,11 +803,13 @@ static const char *s_html =
     "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
     "drawHpf();"
     "window.addEventListener('resize',drawHpf);"
+    "window.addEventListener('resize',drawBattHistory);"
     "function showTab(id){"
     "document.querySelectorAll('.tab-panel').forEach(function(p){p.classList.toggle('active',p.id==='tab-'+id);});"
     "document.querySelectorAll('.tabbtn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===id);});"
     "location.hash=id;"
     "if(id==='audio')drawHpf();"
+    "if(id==='diagnostics')drawBattHistory();"
     "}"
     "document.querySelectorAll('.tabbtn').forEach(function(b){b.onclick=function(){showTab(b.dataset.tab);};});"
     "showTab(location.hash.slice(1)||'dashboard');"
@@ -932,7 +977,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *app = esp_app_get_description();
 
-    const size_t bufsz = 40960;
+    const size_t bufsz = 49152;
     char *buf = malloc(bufsz);
     if (!buf) return ESP_ERR_NO_MEM;
 
@@ -1864,6 +1909,51 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// GET /battery/history — rolling 24h battery/MPPT log for the Diagnostics
+// tab's graph. Both the point array and the JSON text are allocated from
+// PSRAM rather than the stack/internal heap — at up to BATT_HISTORY_MAX_
+// SAMPLES (1440) points, the JSON alone can run tens of KB, too large for
+// a worker task's stack or to risk on internal RAM.
+// ---------------------------------------------------------------------------
+static esp_err_t battery_history_get_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 3);
+
+    battery_history_point_t *pts = heap_caps_malloc(
+        sizeof(battery_history_point_t) * BATT_HISTORY_MAX_SAMPLES, MALLOC_CAP_SPIRAM);
+    if (!pts) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    int n = battery_history_copy(pts, BATT_HISTORY_MAX_SAMPLES);
+
+    // ~40 bytes/point is generous headroom for "{"a":86340,"p":100,"c":1},"
+    size_t cap = (size_t)n * 40 + 32;
+    char *json = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+    if (!json) {
+        heap_caps_free(pts);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    size_t off = 0;
+    off += snprintf(json + off, cap - off, "{\"points\":[");
+    for (int i = 0; i < n; i++) {
+        off += snprintf(json + off, cap - off, "%s{\"a\":%u,\"p\":%u,\"c\":%u}",
+                         i ? "," : "", (unsigned)pts[i].age_sec,
+                         pts[i].pct, pts[i].charging ? 1 : 0);
+    }
+    off += snprintf(json + off, cap - off, "]}");
+    heap_caps_free(pts);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, json, off < cap ? off : cap - 1);
+    heap_caps_free(json);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // GET /wifi/scan — on-demand network list for the SSID picker in the WiFi
 // card (same card/route in both setup-AP and normal operation). Blocking: a
 // scan takes a couple of seconds and stalls this HTTP worker while it runs
@@ -1944,6 +2034,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_status = {
         .uri = "/status", .method = HTTP_GET, .handler = status_get_handler,
     };
+    static const httpd_uri_t get_battery_history = {
+        .uri = "/battery/history", .method = HTTP_GET, .handler = battery_history_get_handler,
+    };
     static const httpd_uri_t post_upd_check = {
         .uri = "/update/check", .method = HTTP_POST, .handler = update_check_post_handler,
     };
@@ -1986,6 +2079,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &post_reset);
     httpd_register_uri_handler(server, &post_ota);
     httpd_register_uri_handler(server, &get_status);
+    httpd_register_uri_handler(server, &get_battery_history);
     httpd_register_uri_handler(server, &post_upd_check);
     httpd_register_uri_handler(server, &post_upd_install);
     httpd_register_uri_handler(server, &get_upd_progress);

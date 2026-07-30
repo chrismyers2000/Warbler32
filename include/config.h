@@ -343,3 +343,19 @@
 #define TASK_MPPT_STACK      3072
 #define TASK_MPPT_PRIORITY   2
 #define TASK_MPPT_CORE       1
+
+// =============================================================================
+// Battery/MPPT history (see battery_history.h) — a rolling 24h log for the
+// Diagnostics tab's graph, samples whichever of MPPT/INA219 is currently
+// present (MPPT takes priority, matching the merged Battery status display)
+// on a fixed timer. One sample/minute for 24h fits exactly in
+// MAX_SAMPLES-many slots, so a plain ring buffer (oldest overwritten once
+// full) enforces the "last 24 hours only" rule with no separate time-based
+// eviction needed. Nothing is recorded while neither source is present.
+// =============================================================================
+#define BATT_HISTORY_SAMPLE_INTERVAL_MS  60000
+#define BATT_HISTORY_MAX_SAMPLES         1440   // 24h * 60min
+
+#define TASK_BATT_HISTORY_STACK     3072
+#define TASK_BATT_HISTORY_PRIORITY  2
+#define TASK_BATT_HISTORY_CORE      1

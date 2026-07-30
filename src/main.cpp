@@ -2,6 +2,7 @@
 #include "status_led.h"
 #include "battery_monitor.h"
 #include "mppt_monitor.h"
+#include "battery_history.h"
 #include "boot_button.h"
 #include "wifi_manager.h"
 #include "web_server.h"
@@ -51,6 +52,10 @@ extern "C" void app_main(void)
     // MPPT solar charge controller monitor (optional — if absent/unpowered,
     // just reads as not present; never blocks boot). See mppt_monitor.h.
     ESP_ERROR_CHECK(mppt_monitor_init());
+
+    // Rolling 24h battery/MPPT history for the Diagnostics tab's graph —
+    // see battery_history.h. Samples whichever of the two above is present.
+    ESP_ERROR_CHECK(battery_history_init());
 
     // Background task: BOOT button gestures (hold = factory reset,
     // single-tap = cycle an active AP's WiFi channel, double-tap = toggle
