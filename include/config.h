@@ -322,11 +322,11 @@
 // =============================================================================
 // MPPT_18W_A04 solar charge controller monitor (see mppt_monitor.h). No
 // public datasheet for this board exists; its protocol was reverse-
-// engineered from captured UART output — it sends a short burst of an
-// AT-style line ("AT+BATTLVL=<percent>,<charging 0/1>\r\n") right at its
-// own power-on, then goes quiet for good (no periodic reporting, confirmed
-// by a 10-minute idle capture), at 9600 baud, 8N1. Uses UART1 (not
-// UART0/console — this board's console actually
+// engineered from captured UART output — it sends an AT-style line
+// ("AT+BATTLVL=<percent>,<charging 0/1>\r\n") apparently whenever the
+// reported value changes rather than on a fixed timer (went silent for
+// 10+ idle minutes, but reliably sent right after a power cycle), at
+// 9600 baud, 8N1. Uses UART1 (not UART0/console — this board's console actually
 // runs over classic UART0 on GPIO43/44, bridged to USB by an onboard chip;
 // the "no external USB-UART needed" comment above is wrong for this pin
 // pair). GPIO44 is NOT free: wiring the MPPT there puts its TX output in

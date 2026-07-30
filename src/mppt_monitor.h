@@ -14,13 +14,15 @@ extern "C" {
 //
 //   AT+BATTLVL=<percent 0-100>,<charging flag 0/1>\r\n
 //
-// The board only transmits a short burst of these right at its own power-on
-// (confirmed by testing: data only ever appeared immediately after a power
-// cycle, never during any idle window up to 10 minutes) — it does not poll
-// or report continuously. Its original companion display was wired RX-only
-// too, so there's no query command to request a fresh reading on demand;
-// whatever value it broadcast at power-up is all there is until the MPPT
-// (or the ESP32, if the MPPT is already running) is power-cycled again.
+// The board doesn't poll on a fixed timer — testing found it silent for
+// long idle stretches (10+ minutes) with no value change, but transmitting
+// reliably right after a power cycle (an extreme case of "value changed").
+// Best working theory: it sends a line when the reported percentage or
+// charging state changes, not on a schedule. Its original companion
+// display was wired RX-only too, so there's no known query command to
+// force a fresh reading on demand — the UART reader task just stays
+// subscribed indefinitely and picks up whatever the board sends, whenever
+// it decides to send it.
 //
 // Gracefully absent, same pattern as battery_monitor.h: if no line has ever
 // been parsed (board unpowered/not wired), mppt_monitor_present() reads
