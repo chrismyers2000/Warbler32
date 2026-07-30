@@ -36,9 +36,9 @@ static void mppt_task(void *arg)
                         pct >= 0 && pct <= 100 && (chg == 0 || chg == 1)) {
                         atomic_store(&s_percent, (uint8_t)pct);
                         atomic_store(&s_charging, chg != 0);
-                        if (!atomic_exchange(&s_present, true))
-                            ESP_LOGI(TAG, "MPPT detected: %d%%, %s",
-                                     pct, chg ? "charging" : "not charging");
+                        atomic_store(&s_present, true);
+                        ESP_LOGI(TAG, "%s (%d%%, %s)",
+                                 line, pct, chg ? "charging" : "not charging");
                     }
                     line_len = 0;
                 }

@@ -175,6 +175,11 @@ static const char *s_html =
     " oninput=\"txv.textContent=this.value\">"
     "<label class=\"tip\" data-tip=\"On a multi-AP network with the same WiFi name (e.g. a mesh), roam to a stronger AP once the current one's signal drops below this. Lower (more negative) = only roam when the link is actually in trouble; higher = roam more eagerly. Each roam briefly interrupts any active RTSP stream (a few seconds), so avoid setting this too high on a network with mediocre-but-workable coverage.\">Roaming RSSI Trigger (dBm)</label>"
     "<input type=\"number\" name=\"roaming_rssi_threshold_dbm\" min=\"-99\" max=\"-30\" value=\"%d\">"
+    "<label class=\"tip\" data-tip=\"Manually bring up or take down the backup WiFi access point &mdash; the same thing double-tapping the BOOT button does, for when that button isn't physically reachable. Only affects the backup AP that appears after a connectivity outage or via this control; the original &lsquo;no saved network&rsquo; setup AP can't be turned off this way, since that would cut off the only way to reach the device.\">Backup AP</label>"
+    "<div style=\"display:flex;gap:8px;align-items:center\">"
+    "<button type=\"button\" id=\"apToggleBtn\" onclick=\"doApToggle()\" style=\"width:auto;padding:8px 14px;font-size:13px;margin:0;background:#374151\">Toggle</button>"
+    "<span class=\"val\" id=\"apToggleSt\">&ndash;</span>"
+    "</div>"
     "</div>"
     "<input type=\"hidden\" name=\"tab\" value=\"device\">"
     "<button type=\"submit\">Save</button>"
@@ -454,6 +459,8 @@ static const char *s_html =
     "bi.style.display='flex';bi.classList.toggle('low',j.batt_low);"
     "var filled=Math.round(j.batt_pct/10),bars=bi.querySelectorAll('.bar');"
     "for(var k=0;k<bars.length;k++)bars[k].classList.toggle('filled',k<filled);}"
+    "var apSt=document.getElementById('apToggleSt');"
+    "if(apSt)apSt.textContent=apStText(j.ap_fallback,j.ap_mode);"
     "}).catch(function(){});"
     "}"
     "setInterval(stPoll,2000);stPoll();"
@@ -686,6 +693,16 @@ static const char *s_html =
     "window.pickScan=function(){"
     "var sel=$('scanSel');"
     "if(sel.value)$('ssidIn').value=sel.value;"
+    "};"
+    "function apStText(fallback,ap){"
+    "return fallback?'Backup AP ON':(ap?'Setup AP (always on)':'OFF');"
+    "}"
+    "window.doApToggle=function(){"
+    "var b=$('apToggleBtn'),st=$('apToggleSt');"
+    "b.disabled=true;"
+    "fetch('/wifi/ap/toggle',{method:'POST'}).then(function(r){return r.json();})"
+    ".then(function(j){b.disabled=false;st.textContent=apStText(j.fallback,j.ap);})"
+    ".catch(function(){b.disabled=false;alert('Toggle failed \\u2014 connection error.');});"
     "};"
     "window.doOta=function(){"
     "var f=document.getElementById('fw').files[0];"
@@ -1430,6 +1447,29 @@ static esp_err_t update_check_post_handler(httpd_req_t *req)
 }
 
 // ---------------------------------------------------------------------------
+// POST /wifi/ap/toggle — WiFi card's "Backup AP" button, a remote stand-in
+// for the BOOT-button double-tap gesture (see boot_button.c) for when the
+// physical button isn't reachable (sealed enclosure, awkward mounting,
+// etc). Same underlying call, same no-op case: turning off the original
+// "no saved network" setup AP isn't possible this way either, since that
+// would strand the device with no network to reach it on at all.
+// ---------------------------------------------------------------------------
+static esp_err_t wifi_ap_toggle_post_handler(httpd_req_t *req)
+{
+    set_send_timeout(req, 2);
+
+    wifi_manager_toggle_fallback_ap();
+
+    char json[64];
+    int len = snprintf(json, sizeof(json), "{\"ap\":%d,\"fallback\":%d}",
+                        wifi_manager_is_ap_mode() ? 1 : 0,
+                        wifi_manager_is_fallback_mode() ? 1 : 0);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, json, len);
+    return ESP_OK;
+}
+
+// ---------------------------------------------------------------------------
 // POST /ntp/sync — force an immediate NTP resync, for the Diagnostics tab's
 // Sync Now button. Blocks the one httpd worker for up to the wait below,
 // same tradeoff /wifi/scan already makes for a bounded, user-initiated action.
@@ -1784,7 +1824,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     uint8_t mppt_pct       = mppt_monitor_percent();
     bool    mppt_charging  = mppt_monitor_charging();
 
-    char json[560];
+    char json[620];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
@@ -1793,6 +1833,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         "\"wd_enabled\":%d,\"wd_stall\":%u,"
         "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
         "\"mppt_present\":%d,\"mppt_pct\":%d,\"mppt_charging\":%d,"
+        "\"ap_mode\":%d,\"ap_fallback\":%d,"
         "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
@@ -1810,6 +1851,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         g_config.watchdog_enabled ? 1 : 0, (unsigned)pipeline_watchdog_stall_secs(),
         batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
         mppt_present ? 1 : 0, mppt_pct, mppt_charging ? 1 : 0,
+        wifi_manager_is_ap_mode() ? 1 : 0, wifi_manager_is_fallback_mode() ? 1 : 0,
         esp_app_get_description()->version, ota_board_variant());
 
     // snprintf returns the would-be length — never send past the buffer
@@ -1917,6 +1959,9 @@ esp_err_t web_server_start(void)
     static const httpd_uri_t get_wifi_scan = {
         .uri = "/wifi/scan", .method = HTTP_GET, .handler = wifi_scan_get_handler,
     };
+    static const httpd_uri_t post_wifi_ap_toggle = {
+        .uri = "/wifi/ap/toggle", .method = HTTP_POST, .handler = wifi_ap_toggle_post_handler,
+    };
     static const httpd_uri_t post_ntp_sync = {
         .uri = "/ntp/sync", .method = HTTP_POST, .handler = ntp_sync_post_handler,
     };
@@ -1946,6 +1991,7 @@ esp_err_t web_server_start(void)
     httpd_register_uri_handler(server, &get_upd_progress);
     httpd_register_uri_handler(server, &get_listen);
     httpd_register_uri_handler(server, &get_wifi_scan);
+    httpd_register_uri_handler(server, &post_wifi_ap_toggle);
     httpd_register_uri_handler(server, &post_ntp_sync);
     httpd_register_uri_handler(server, &get_logs);
     httpd_register_uri_handler(server, &get_logs_download);
