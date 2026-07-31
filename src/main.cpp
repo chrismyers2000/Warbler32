@@ -1,5 +1,6 @@
 #include "app_config.h"
 #include "status_led.h"
+#include "cpu_temp.h"
 #include "battery_monitor.h"
 #include "mppt_monitor.h"
 #include "battery_history.h"
@@ -44,6 +45,9 @@ extern "C" void app_main(void)
 
     // Status LED: start before WiFi so we show "connecting" immediately
     ESP_ERROR_CHECK(status_led_init());
+
+    // ESP32-S3's built-in die temperature sensor, for the Diagnostics tab
+    ESP_ERROR_CHECK(cpu_temp_init());
 
     // Battery voltage monitor (INA219, optional — if absent, the Status
     // card just shows it as not present; never blocks boot)

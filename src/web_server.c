@@ -5,6 +5,7 @@
 #include "battery_monitor.h"
 #include "mppt_monitor.h"
 #include "battery_history.h"
+#include "cpu_temp.h"
 #include "pipeline_watchdog.h"
 #include "rtsp_server.h"
 #include "wifi_manager.h"
@@ -319,6 +320,8 @@ static const char *s_html =
     "<input type=\"time\" name=\"auto_reboot_time\" value=\"%02d:%02d\">"
     "</div>"
     "<div class=\"card\" style=\"margin-top:16px\"><h2>Diagnostics</h2>"
+    "<label class=\"tip\" data-tip=\"The ESP32-S3's built-in die temperature sensor. This is chip temperature, not ambient - it rises under CPU/WiFi load, so treat it as a thermal reading, not a weather sensor.\">CPU Temperature</label>"
+    "<p id=\"cpuTemp\" style=\"margin:0 0 14px\">&ndash;</p>"
     "<label class=\"tip\" data-tip=\"Reboots the device if the audio reader task ever stops producing data entirely for about a minute (a wedged driver call, not just a quiet/dead mic - see Mic Health above for that). Off means a stall like that needs a manual power cycle to clear.\">Stall Watchdog</label>"
     "<select name=\"watchdog_enabled\">"
     "<option value=\"1\"%s>Enabled</option>"
@@ -469,6 +472,8 @@ static const char *s_html =
     "for(var k=0;k<bars.length;k++)bars[k].classList.toggle('filled',k<filled);}"
     "var apSt=document.getElementById('apToggleSt');"
     "if(apSt)apSt.textContent=apStText(j.ap_fallback,j.ap_mode);"
+    "var ct=document.getElementById('cpuTemp');"
+    "if(ct)ct.textContent=j.cpu_temp_ok?j.cpu_temp_c.toFixed(1)+' \\u00b0C':'\\u2013';"
     "}).catch(function(){});"
     "}"
     "setInterval(stPoll,2000);stPoll();"
@@ -1869,7 +1874,10 @@ static esp_err_t status_get_handler(httpd_req_t *req)
     uint8_t mppt_pct       = mppt_monitor_percent();
     bool    mppt_charging  = mppt_monitor_charging();
 
-    char json[620];
+    float cpu_temp_c = 0;
+    bool  cpu_temp_ok = (cpu_temp_read_celsius(&cpu_temp_c) == ESP_OK);
+
+    char json[660];
     int len = snprintf(json, sizeof(json),
         "{\"uptime\":%lld,\"heap\":%u,\"heap_min\":%u,\"psram\":%u,"
         "\"rssi\":%d,\"clients\":%d,\"max_clients\":%d,\"streaming\":%d,"
@@ -1879,6 +1887,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         "\"batt_present\":%d,\"batt_mv\":%u,\"batt_pct\":%d,\"batt_low\":%d,"
         "\"mppt_present\":%d,\"mppt_pct\":%d,\"mppt_charging\":%d,"
         "\"ap_mode\":%d,\"ap_fallback\":%d,"
+        "\"cpu_temp_ok\":%d,\"cpu_temp_c\":%.1f,"
         "\"version\":\"%s\",\"variant\":\"%s\"}",
         esp_timer_get_time() / 1000000,
         (unsigned)esp_get_free_heap_size(),
@@ -1897,6 +1906,7 @@ static esp_err_t status_get_handler(httpd_req_t *req)
         batt_present ? 1 : 0, (unsigned)batt_mv, batt_pct, batt_low ? 1 : 0,
         mppt_present ? 1 : 0, mppt_pct, mppt_charging ? 1 : 0,
         wifi_manager_is_ap_mode() ? 1 : 0, wifi_manager_is_fallback_mode() ? 1 : 0,
+        cpu_temp_ok ? 1 : 0, cpu_temp_c,
         esp_app_get_description()->version, ota_board_variant());
 
     // snprintf returns the would-be length — never send past the buffer
