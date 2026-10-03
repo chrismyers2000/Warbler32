@@ -41,8 +41,10 @@ static esp_err_t ws2812_encoder_init(void)
 }
 
 // Write a single pixel. Color bytes are in GRB order (WS2812B order).
+
 static void ws2812_set(uint8_t r, uint8_t g, uint8_t b)
 {
+#if defined(NEOPIXEL_GPIO)
     uint8_t grb[3] = { g, r, b };
 
     rmt_transmit_config_t tx_cfg = {
@@ -52,6 +54,7 @@ static void ws2812_set(uint8_t r, uint8_t g, uint8_t b)
     rmt_tx_wait_all_done(s_rmt_chan, pdMS_TO_TICKS(10));
     // WS2812B reset: hold data line low ≥ 50 µs.
     // The task delay between calls is always >> 50 µs, so no extra wait needed.
+#endif
 }
 
 static void ws2812_off(void) { ws2812_set(0, 0, 0); }
@@ -85,6 +88,7 @@ void status_led_flash(void)
     atomic_store(&s_flash_ticks, 6);  // 6 × 50 ms = 300 ms of rapid white flashing
 }
 
+#if defined(NEOPIXEL_GPIO)
 static void led_task(void *arg)
 {
     bool toggle = false;
@@ -168,12 +172,14 @@ static void led_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
+#endif
 
 // ---------------------------------------------------------------------------
 // Init
 // ---------------------------------------------------------------------------
 esp_err_t status_led_init(void)
 {
+#ifdef NEOPIXEL_GPIO
     rmt_tx_channel_config_t chan_cfg = {
         .gpio_num            = NEOPIXEL_GPIO,
         .clk_src             = RMT_CLK_SRC_DEFAULT,
@@ -203,4 +209,8 @@ esp_err_t status_led_init(void)
 
     ESP_LOGI(TAG, "NeoPixel on GPIO %d, brightness %d", NEOPIXEL_GPIO, g_config.led_brightness);
     return ESP_OK;
+#else
+    ESP_LOGW(TAG, "No NeoPixel GPIO defined; status LED disabled");
+    return ESP_OK;
+#endif
 }

@@ -9,12 +9,15 @@
 
 static const char *TAG = "battery";
 
+#if defined(BATTERY_I2C_PORT)
 static i2c_master_bus_handle_t s_bus;
 static i2c_master_dev_handle_t s_dev;
+#endif
 
 static atomic_bool      s_present;
 static _Atomic uint32_t s_voltage_mv;
 
+#if defined(BATTERY_I2C_PORT)
 static void battery_task(void *arg)
 {
     for (;;) {
@@ -39,9 +42,11 @@ static void battery_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(BATTERY_POLL_INTERVAL_MS));
     }
 }
+#endif
 
 esp_err_t battery_monitor_init(void)
 {
+#if defined(BATTERY_I2C_PORT)
     i2c_master_bus_config_t bus_cfg = {
         .i2c_port   = BATTERY_I2C_PORT,
         .sda_io_num = BATTERY_I2C_SDA_GPIO,
@@ -73,6 +78,10 @@ esp_err_t battery_monitor_init(void)
         TASK_BATTERY_PRIORITY, NULL,
         TASK_BATTERY_CORE);
     return (ok == pdPASS) ? ESP_OK : ESP_ERR_NO_MEM;
+#else
+    ESP_LOGI(TAG, "INA219 disabled at compile time");
+    return ESP_OK;
+#endif
 }
 
 bool battery_monitor_present(void)

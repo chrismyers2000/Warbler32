@@ -124,7 +124,9 @@ static const char *s_html =
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"dashboard\">Dashboard</button>"
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"device\">Device &amp; Network</button>"
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"audio\">Audio</button>"
+#if defined(BATTERY_I2C_PORT) || defined(NEOPIXEL_GPIO)
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"hardware\">Hardware</button>"
+#endif
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"diagnostics\">Diagnostics</button>"
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"firmware\">Firmware</button>"
     "<button type=\"button\" class=\"tabbtn\" data-tab=\"advanced\">Advanced</button>"
@@ -265,6 +267,7 @@ static const char *s_html =
     "</div>"
     "</div>"
     "</div>"
+#if defined(BATTERY_I2C_PORT) || defined(NEOPIXEL_GPIO)
     "<div class=\"tab-panel\" id=\"tab-hardware\">"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>LED</h2>"
@@ -301,6 +304,7 @@ static const char *s_html =
     "LED and Battery settings apply instantly.</p>"
     "</form>"
     "</div>"
+#endif
     "<div class=\"tab-panel\" id=\"tab-diagnostics\">"
     "<form method=\"POST\" action=\"/save\">"
     "<div class=\"card\"><h2>Time</h2>"
@@ -785,6 +789,7 @@ static const char *s_html =
     "document.getElementById('mmWrap').classList.toggle('dim',usb);"
     "};"
     "toggleGainShift();"
+#if defined(BATTERY_I2C_PORT) || defined(NEOPIXEL_GPIO)
     // Per-cell [low,nominal,full] volts for each preset chemistry — pack
     // voltage is this times the selected cell count. Custom skips this
     // table entirely and leaves the three fields as whatever's saved/typed.
@@ -804,6 +809,7 @@ static const char *s_html =
     "$('battFull').value=(t[2]*cells).toFixed(2);"
     "};"
     "battUI();"
+#endif
     "var dv=$('depthIn').value;"
     "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
     "drawHpf();"
@@ -1014,6 +1020,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.hpf_slope == 3 ? " selected" : "",
         g_config.hpf_slope == 4 ? " selected" : "",
         (int)g_config.hpf_depth, (int)g_config.hpf_depth,
+#if defined(BATTERY_I2C_PORT) || defined(NEOPIXEL_GPIO)
         (int)g_config.led_brightness, (int)g_config.led_brightness,
         g_config.batt_chemistry == 0 ? " selected" : "",
         g_config.batt_chemistry == 1 ? " selected" : "",
@@ -1025,6 +1032,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.batt_low_mv  / 1000.0,
         g_config.batt_nom_mv  / 1000.0,
         g_config.batt_full_mv / 1000.0,
+#endif
         ntp_esc,
         g_config.utc_offset_min / 60.0,
         device_time,

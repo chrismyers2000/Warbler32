@@ -248,6 +248,8 @@
 // =============================================================================
 // NeoPixel status LED (WS2812B on GPIO 48 = onboard RGB LED)
 // =============================================================================
+// Comment out NEOPIXEL_GPIO to disable the LED entirely (saves a few mA
+// of power) or if you dont have programmable RGB LED hardware.
 #define NEOPIXEL_GPIO       48
 #define NEOPIXEL_BRIGHTNESS 30   // 0-255; keep low to avoid glare indoors
 
@@ -301,6 +303,8 @@
 // affected (no blocking boot, no error spam beyond one log line per
 // present/absent transition).
 // =============================================================================
+// Comment out BATTERY_I2C_PORT to disable the INA219 entirely (saves a few mA of
+// power) or if you don't have an INA219 on the I2C bus.
 #define BATTERY_I2C_PORT        I2C_NUM_0
 #define BATTERY_I2C_SDA_GPIO    8     // free on ESP32-S3-DevKitC-1: not a
 #define BATTERY_I2C_SCL_GPIO    9     // strapping pin, not USB D+/D-, not PSRAM
