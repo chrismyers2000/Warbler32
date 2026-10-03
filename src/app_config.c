@@ -3,6 +3,8 @@
 
 #include "nvs.h"
 #include "esp_log.h"
+#include "time_sync.h"
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "config";
@@ -38,7 +40,7 @@ esp_err_t app_config_load(void)
     g_config.auto_reboot_enabled  = AUTO_REBOOT_DEFAULT_ENABLED;
     g_config.auto_reboot_time_min = AUTO_REBOOT_TIME_MIN_DEFAULT;
     strlcpy(g_config.ntp_server, NTP_SERVER_DEFAULT, sizeof(g_config.ntp_server));
-    g_config.utc_offset_min = UTC_OFFSET_MIN_DEFAULT;
+    strlcpy(g_config.timezone,   TIMEZONE_DEFAULT,   sizeof(g_config.timezone));
     g_config.roaming_rssi_threshold_dbm = ROAMING_RSSI_THRESHOLD_DBM_DEFAULT;
 
     nvs_handle_t h;
@@ -46,6 +48,7 @@ esp_err_t app_config_load(void)
     if (ret != ESP_OK) {
         // Namespace not written yet — defaults are fine
         ESP_LOGI(TAG, "no saved config, using defaults");
+        time_sync_set_timezone(g_config.timezone);
         return ESP_OK;
     }
 
@@ -80,10 +83,26 @@ esp_err_t app_config_load(void)
     nvs_get_u16(h, "ar_time_min", &g_config.auto_reboot_time_min);
     len = sizeof(g_config.ntp_server);
     nvs_get_str(h, "ntp_server",  g_config.ntp_server,    &len);
-    nvs_get_i16(h, "utc_off_min", &g_config.utc_offset_min);
+    len = sizeof(g_config.timezone);
+    if (nvs_get_str(h, "timezone", g_config.timezone,     &len) != ESP_OK) {
+        // Migration fallback: check if old fixed UTC offset key existed
+        int16_t old_off = 0;
+        if (nvs_get_i16(h, "utc_off_min", &old_off) == ESP_OK) {
+            if (old_off == 0) {
+                strlcpy(g_config.timezone, "UTC0", sizeof(g_config.timezone));
+            } else {
+                int h_off = -old_off / 60;
+                int m_off = abs(old_off % 60);
+                if (m_off != 0) snprintf(g_config.timezone, sizeof(g_config.timezone), "UTC%+d:%02d", h_off, m_off);
+                else snprintf(g_config.timezone, sizeof(g_config.timezone), "UTC%+d", h_off);
+            }
+        }
+    }
     nvs_get_i8 (h, "roam_rssi",   &g_config.roaming_rssi_threshold_dbm);
 
     nvs_close(h);
+
+    time_sync_set_timezone(g_config.timezone);
 
     ESP_LOGI(TAG, "loaded: name=\"%s\" ssid=\"%s\" rate=%lu shift=%d mult=%d bright=%d",
              g_config.device_name, g_config.wifi_ssid, (unsigned long)g_config.sample_rate,
@@ -122,7 +141,7 @@ esp_err_t app_config_save(void)
     nvs_set_u8 (h, "ar_enable",   g_config.auto_reboot_enabled);
     nvs_set_u16(h, "ar_time_min", g_config.auto_reboot_time_min);
     nvs_set_str(h, "ntp_server",  g_config.ntp_server);
-    nvs_set_i16(h, "utc_off_min", g_config.utc_offset_min);
+    nvs_set_str(h, "timezone",    g_config.timezone);
     nvs_set_i8 (h, "roam_rssi",   g_config.roaming_rssi_threshold_dbm);
     nvs_commit(h);
     nvs_close(h);

@@ -177,12 +177,9 @@
 // NTP time sync (see time_sync.h) — the device has no RTC battery, so every
 // boot starts at the Jan 1 1970 epoch until this lands. Needed for the local
 // timestamps in the Diagnostics log viewer and for AUTO_REBOOT_* above to
-// mean anything. No DST support: UTC offset is a fixed user-set value (web
-// UI app_config.h utc_offset_min), not a timezone database lookup — simplest
-// thing that actually satisfies "reboot at 3am local," re-set twice a year
-// by hand if the deployment observes DST.
+// mean anything. Supports standard POSIX TZ strings with automatic DST.
 #define NTP_SERVER_DEFAULT      "pool.ntp.org"
-#define UTC_OFFSET_MIN_DEFAULT  0
+#define TIMEZONE_DEFAULT        "UTC0"
 // Treat the system clock as synced once it's past this year — cheaply rules
 // out the pre-sync 1970 epoch default without needing extra state tracking.
 #define TIME_SYNC_SANE_YEAR     2024

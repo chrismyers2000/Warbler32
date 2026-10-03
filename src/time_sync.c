@@ -5,6 +5,7 @@
 #include "esp_netif_sntp.h"
 #include "esp_log.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const char *TAG = "time_sync";
@@ -16,8 +17,18 @@ static bool year_is_sane(time_t t)
     return (tm_utc.tm_year + 1900) >= TIME_SYNC_SANE_YEAR;
 }
 
+void time_sync_set_timezone(const char *tz)
+{
+    const char *tz_str = (tz && tz[0]) ? tz : TIMEZONE_DEFAULT;
+    setenv("TZ", tz_str, 1);
+    tzset();
+    ESP_LOGI(TAG, "timezone set to %s", tz_str);
+}
+
 esp_err_t time_sync_start(void)
 {
+    time_sync_set_timezone(g_config.timezone);
+
     esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG(g_config.ntp_server);
     // Needed so time_sync_now() below can esp_netif_sntp_sync_wait() on a
     // later manual resync — doesn't make this call itself block.
@@ -47,8 +58,7 @@ bool time_sync_get_local_tm(struct tm *tm_out)
 {
     time_t now = time(NULL);
     if (!year_is_sane(now)) return false;
-    time_t local = now + (time_t)g_config.utc_offset_min * 60;
-    gmtime_r(&local, tm_out);
+    localtime_r(&now, tm_out);
     return true;
 }
 

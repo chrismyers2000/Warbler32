@@ -34,7 +34,7 @@ typedef struct {
     uint8_t  auto_reboot_enabled;   // reboot once a day at auto_reboot_time_min regardless of health (see auto_reboot.h)
     uint16_t auto_reboot_time_min;  // local time of day to reboot, minutes since midnight (0-1439)
     char     ntp_server[64];        // NTP server hostname (see time_sync.h)
-    int16_t  utc_offset_min;        // fixed UTC offset in minutes, no DST (e.g. -300 = EST, 330 = IST)
+    char     timezone[64];          // POSIX timezone string with DST rules (e.g. "EST5EDT,M3.2.0,M11.1.0" or "UTC0")
     int8_t   roaming_rssi_threshold_dbm; // roam once the current AP's RSSI drops below this (see wifi_manager_apply_roaming_rssi())
 } app_config_t;
 

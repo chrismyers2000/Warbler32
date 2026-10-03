@@ -306,9 +306,30 @@ static const char *s_html =
     "<div class=\"card\"><h2>Time</h2>"
     "<label class=\"tip\" data-tip=\"NTP server used to set the device's clock. There's no battery-backed RTC, so every boot starts at Jan 1 1970 until this lands.\">NTP Server</label>"
     "<input type=\"text\" name=\"ntp_server\" maxlength=\"63\" value=\"%s\">"
-    "<label class=\"tip\" data-tip=\"Fixed offset from UTC for displayed timestamps and the Scheduled Reboot time below. No daylight saving - re-set by 1 hour twice a year if your location observes DST.\">UTC Offset (hours)</label>"
-    "<input type=\"number\" name=\"utc_offset_hours\" min=\"-12\" max=\"14\" step=\"0.25\" value=\"%g\">"
-    "<label class=\"tip\" data-tip=\"The device's current idea of the local time, using the offset above. \\u201cnot synced\\u201d means NTP hasn't landed yet - check WiFi/internet reachability, or press Sync Now.\">Device Time</label>"
+    "<label class=\"tip\" data-tip=\"Timezone for displayed timestamps and scheduled reboots. Supports standard POSIX TZ strings with automatic Daylight Saving Time (DST). Pick a preset or enter a custom POSIX string.\">Timezone</label>"
+    "<select id=\"tzSel\" onchange=\"applyTzPreset()\">"
+    "<option value=\"EST5EDT,M3.2.0,M11.1.0\">US Eastern (EST/EDT)</option>"
+    "<option value=\"CST6CDT,M3.2.0,M11.1.0\">US Central (CST/CDT)</option>"
+    "<option value=\"MST7MDT,M3.2.0,M11.1.0\">US Mountain (MST/MDT)</option>"
+    "<option value=\"MST7\">US Arizona (MST)</option>"
+    "<option value=\"PST8PDT,M3.2.0,M11.1.0\">US Pacific (PST/PDT)</option>"
+    "<option value=\"AKST9AKDT,M3.2.0,M11.1.0\">US Alaska (AKST/AKDT)</option>"
+    "<option value=\"HST10\">US Hawaii (HST)</option>"
+    "<option value=\"GMT0BST,M3.5.0/1,M10.5.0\">Europe / London (GMT/BST)</option>"
+    "<option value=\"CET-1CEST,M3.5.0,M10.5.0/3\">Europe / Paris, Berlin, Rome (CET/CEST)</option>"
+    "<option value=\"EET-2EEST,M3.5.0/3,M10.5.0/4\">Europe / Athens, Helsinki, Kyiv (EET/EEST)</option>"
+    "<option value=\"AEST-10AEDT,M10.1.0,M4.1.0/3\">Australia / Sydney, Melbourne (AEST/AEDT)</option>"
+    "<option value=\"ACST-9:30ACDT,M10.1.0,M4.1.0/3\">Australia / Adelaide (ACST/ACDT)</option>"
+    "<option value=\"AWST-8\">Australia / Perth (AWST)</option>"
+    "<option value=\"NZST-12NZDT,M9.5.0,M4.1.0/3\">New Zealand (NZST/NZDT)</option>"
+    "<option value=\"JST-9\">Asia / Tokyo (JST)</option>"
+    "<option value=\"CST-8\">Asia / Shanghai, Hong Kong (CST)</option>"
+    "<option value=\"IST-5:30\">Asia / Kolkata (IST)</option>"
+    "<option value=\"UTC0\">UTC</option>"
+    "<option value=\"custom\">Custom (POSIX TZ)...</option>"
+    "</select>"
+    "<input type=\"text\" name=\"timezone\" id=\"tzIn\" maxlength=\"63\" value=\"%s\" style=\"margin-top:6px\">"
+    "<label class=\"tip\" data-tip=\"The device's current idea of the local time. \\u201cnot synced\\u201d means NTP hasn't landed yet - check WiFi/internet reachability, or press Sync Now.\">Device Time</label>"
     "<p id=\"devtime\" style=\"margin:0 0 10px\">%s</p>"
     "<button type=\"button\" id=\"ntpbtn\" onclick=\"doNtpSync()\" style=\"background:#374151;width:auto;padding:8px 16px;font-size:13px;margin:0 0 14px\">Sync Now</button>"
     "<label class=\"tip\" data-tip=\"Reboots the device once a day at the local time below, regardless of health, as a blunt catch-all for slow leak/hang bugs the Diagnostics tab's Stall Watchdog doesn't cover (it only catches the audio pipeline going fully silent). Interrupts any active stream when it fires. Never fires before this device has a synced clock.\">Scheduled Reboot</label>"
@@ -804,6 +825,19 @@ static const char *s_html =
     "$('battFull').value=(t[2]*cells).toFixed(2);"
     "};"
     "battUI();"
+    "window.applyTzPreset=function(){"
+    "var v=$('tzSel').value;"
+    "if(v!=='custom')$('tzIn').value=v;"
+    "};"
+    "function tzUI(){"
+    "var v=$('tzIn').value,sel=$('tzSel'),found=false;"
+    "for(var i=0;i<sel.options.length;i++){"
+    "if(sel.options[i].value===v){sel.selectedIndex=i;found=true;break;}"
+    "}"
+    "if(!found)sel.value='custom';"
+    "}"
+    "$('tzIn').oninput=tzUI;"
+    "tzUI();"
     "var dv=$('depthIn').value;"
     "$('hdv').textContent=dv>=60?'Full':dv+' dB';"
     "drawHpf();"
@@ -971,11 +1005,12 @@ static esp_err_t root_get_handler(httpd_req_t *req)
     // almost any printable character (unlike device_name, which is already
     // restricted to alnum+hyphen at save time), so this is output encoding,
     // not input filtering.
-    char name_esc[200], ssid_esc[400], pass_esc[400], ntp_esc[128];
+    char name_esc[200], ssid_esc[400], pass_esc[400], ntp_esc[128], tz_esc[128];
     html_escape(g_config.device_name,   name_esc, sizeof(name_esc));
     html_escape(g_config.wifi_ssid,     ssid_esc, sizeof(ssid_esc));
     html_escape(g_config.wifi_password, pass_esc, sizeof(pass_esc));
     html_escape(g_config.ntp_server,    ntp_esc,  sizeof(ntp_esc));
+    html_escape(g_config.timezone,      tz_esc,   sizeof(tz_esc));
 
     char device_time[32];
     time_sync_format_local(device_time, sizeof(device_time));
@@ -1026,7 +1061,7 @@ static esp_err_t root_get_handler(httpd_req_t *req)
         g_config.batt_nom_mv  / 1000.0,
         g_config.batt_full_mv / 1000.0,
         ntp_esc,
-        g_config.utc_offset_min / 60.0,
+        tz_esc,
         device_time,
         g_config.auto_reboot_enabled ? " selected" : "",
         !g_config.auto_reboot_enabled ? " selected" : "",
@@ -1106,11 +1141,13 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     strlcpy(old_ssid, g_config.wifi_ssid,     sizeof(old_ssid));
     strlcpy(old_pass, g_config.wifi_password, sizeof(old_pass));
 
-    // Not part of reboot_needed below (NTP server applies live, no reboot) —
-    // just used after saving to decide whether time_sync_start() needs to
-    // re-run against the new server.
+    // Not part of reboot_needed below (NTP server and timezone apply live, no reboot) —
+    // just used after saving to decide whether time_sync_start() / time_sync_set_timezone()
+    // needs to re-run.
     char old_ntp_server[sizeof(g_config.ntp_server)];
     strlcpy(old_ntp_server, g_config.ntp_server, sizeof(old_ntp_server));
+    char old_timezone[sizeof(g_config.timezone)];
+    strlcpy(old_timezone, g_config.timezone, sizeof(old_timezone));
 
     char val[128];
 
@@ -1267,11 +1304,8 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     get_field(body, "ntp_server", val, sizeof(val));
     if (val[0]) strlcpy(g_config.ntp_server, val, sizeof(g_config.ntp_server));
 
-    get_field(body, "utc_offset_hours", val, sizeof(val));
-    if (val[0]) {
-        double v = atof(val);
-        if (v >= -12 && v <= 14) g_config.utc_offset_min = (int16_t)lround(v * 60);
-    }
+    get_field(body, "timezone", val, sizeof(val));
+    if (val[0]) strlcpy(g_config.timezone, val, sizeof(g_config.timezone));
 
     // Which tab's form posted this — used only to send the browser back to
     // that tab after the reload, so saving e.g. Audio settings doesn't dump
@@ -1299,6 +1333,9 @@ static esp_err_t save_post_handler(httpd_req_t *req)
     app_config_save();
     wifi_manager_apply_tx_power();
     wifi_manager_apply_roaming_rssi();
+
+    if (strcmp(old_timezone, g_config.timezone) != 0)
+        time_sync_set_timezone(g_config.timezone);
 
     // Re-point the SNTP client at the new server. Only meaningful with a
     // real WAN uplink — skip while broadcasting the setup/backup AP, same
