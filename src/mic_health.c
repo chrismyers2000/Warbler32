@@ -11,11 +11,11 @@ static atomic_bool     s_started;       // first chunk seen
 static _Atomic int64_t s_last_live_us;  // when the signal last moved
 static atomic_bool     s_flagged;       // warning logged for current outage
 
-void mic_health_report(const int16_t *buf, size_t count)
+void mic_health_report(const int32_t *buf, size_t count)
 {
     if (count == 0) return;
 
-    int16_t mn = buf[0], mx = buf[0];
+    int32_t mn = buf[0], mx = buf[0];
     for (size_t i = 1; i < count; i++) {
         if (buf[i] < mn) mn = buf[i];
         if (buf[i] > mx) mx = buf[i];
@@ -27,7 +27,8 @@ void mic_health_report(const int16_t *buf, size_t count)
         atomic_store(&s_started, true);
     }
 
-    if ((int32_t)mx - (int32_t)mn >= MIC_HEALTH_MIN_P2P) {
+    // MIC_HEALTH_MIN_P2P is in 16-bit LSBs; samples are full-scale 32-bit
+    if (((int64_t)mx - mn) >= ((int64_t)MIC_HEALTH_MIN_P2P << 16)) {
         atomic_store(&s_last_live_us, now);
         if (atomic_exchange(&s_flagged, false))
             ESP_LOGI(TAG, "mic signal restored");

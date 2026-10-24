@@ -85,6 +85,10 @@ esp_err_t app_config_load(void)
 
     nvs_close(h);
 
+    // Same ranges the web UI enforces; the DSP and I2S shift rely on them.
+    if (g_config.gain_shift < 8 || g_config.gain_shift > 20) g_config.gain_shift = AUDIO_GAIN_SHIFT;
+    if (g_config.gain_mult  < 1 || g_config.gain_mult  > 32) g_config.gain_mult  = AUDIO_GAIN_MULT;
+
     ESP_LOGI(TAG, "loaded: name=\"%s\" ssid=\"%s\" rate=%lu shift=%d mult=%d bright=%d",
              g_config.device_name, g_config.wifi_ssid, (unsigned long)g_config.sample_rate,
              g_config.gain_shift, g_config.gain_mult, g_config.led_brightness);

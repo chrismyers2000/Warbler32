@@ -109,6 +109,9 @@ size_t i2s_mic_read(int16_t *buf, size_t count)
     // we read `chunk` full stereo frames, then keep only every other
     // sample to get back to the correct 1× playback speed.
     static int32_t raw[I2S_DMA_BUF_LEN * 2];
+    static int32_t samples[RTP_SAMPLES_PER_PACKET];
+
+    if (count > RTP_SAMPLES_PER_PACKET) count = RTP_SAMPLES_PER_PACKET;
 
     size_t to_read = count;
     size_t out_idx = 0;
@@ -124,12 +127,12 @@ size_t i2s_mic_read(int16_t *buf, size_t count)
 
         size_t raw_samples = bytes_read / sizeof(int32_t);
         for (size_t i = 0; i < raw_samples; i += 2) {
-            buf[out_idx++] = (int16_t)(raw[i + s_data_slot] >> g_config.gain_shift);
+            samples[out_idx++] = raw[i + s_data_slot];
         }
         to_read -= raw_samples / 2;
     }
 
-    audio_dsp_process(&s_dsp, buf, out_idx);
+    audio_dsp_process(&s_dsp, samples, buf, out_idx, g_config.gain_shift);
     return out_idx;
 }
 

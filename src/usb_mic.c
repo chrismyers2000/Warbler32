@@ -10,10 +10,15 @@
 #include "usb/uac_host.h"
 
 #include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "freertos/queue.h"
 
 static const char *TAG = "usb_mic";
+
+#define MAX_CHANNELS            2
+#define MAX_SUBFRAME_BYTES      4   // 24-bit audio may be carried in 3- or 4-byte subframes
+#define MAX_FRAME_BYTES         (MAX_CHANNELS * MAX_SUBFRAME_BYTES)
+#define USB_MIC_BUFFER_PACKETS  4
+#define USB_MIC_DSP_SHIFT       16  // full-scale 32-bit -> 16-bit; USB mics have no gain_shift setting
 
 typedef struct {
     uint8_t addr;
@@ -26,6 +31,7 @@ static uac_host_device_handle_t volatile s_dev = NULL;
 static QueueHandle_t            s_connect_q = NULL;
 static audio_dsp_state_t        s_dsp;
 static uint8_t                  s_channels  = 1;
+static uint8_t                  s_subframe  = 2;
 static bool                     s_host_ready = false;
 
 // Pumps USB Host Library events. Required for every USB Host application,
@@ -77,16 +83,19 @@ static void device_event_cb(uac_host_device_handle_t handle,
 }
 
 // Pick the alt setting whose sample rate exactly matches g_config.sample_rate
-// (16-bit only). A mismatch would desync the RTSP/RTP timing, which bakes in
-// g_config.sample_rate, so we require an exact match rather than a nearest one.
-static bool find_alt_setting(uac_host_dev_info_t *dev_info, uac_host_dev_alt_param_t *out)
+// (16-bit preferred, 24-bit accepted). A mismatch would desync the RTSP/RTP timing,
+// which bakes in g_config.sample_rate, so we require an exact match rather than a nearest one.
+static bool find_alt_for_bits(uac_host_dev_info_t *dev_info, uint8_t bits,
+                              uac_host_dev_alt_param_t *out)
 {
     bool found = false;
 
     for (uint8_t alt = 1; alt <= dev_info->iface_alt_num; alt++) {
         uac_host_dev_alt_param_t p;
         if (uac_host_get_device_alt_param(s_dev, alt, &p) != ESP_OK) continue;
-        if (p.bit_resolution != 16) continue;
+        if (p.bit_resolution != bits) continue;
+        if (p.subframe_size < sizeof(int16_t) || p.subframe_size > MAX_SUBFRAME_BYTES) continue;
+        if (p.channels < 1 || p.channels > MAX_CHANNELS) continue;
 
         bool rate_ok = false;
         if (p.sample_freq_type == 0) {
@@ -105,6 +114,16 @@ static bool find_alt_setting(uac_host_dev_info_t *dev_info, uac_host_dev_alt_par
     }
 
     return found;
+}
+
+static bool find_alt_setting(uac_host_dev_info_t *dev_info, uac_host_dev_alt_param_t *out)
+{
+    static const uint8_t bit_prefs[] = { 16, 24 };
+
+    for (size_t b = 0; b < sizeof(bit_prefs); b++) {
+        if (find_alt_for_bits(dev_info, bit_prefs[b], out)) return true;
+    }
+    return false;
 }
 
 esp_err_t usb_mic_init(void)
@@ -170,8 +189,10 @@ esp_err_t usb_mic_init(void)
     uac_host_device_config_t dev_config = {
         .addr             = info.addr,
         .iface_num        = info.iface_num,
-        .buffer_size      = RTP_SAMPLES_PER_PACKET * sizeof(int16_t) * 4,
-        .buffer_threshold = RTP_SAMPLES_PER_PACKET * sizeof(int16_t),
+        // The alt setting isn't chosen until after the device is opened, so
+        // size for the worst-case frame.
+        .buffer_size      = RTP_SAMPLES_PER_PACKET * MAX_FRAME_BYTES * USB_MIC_BUFFER_PACKETS,
+        .buffer_threshold = RTP_SAMPLES_PER_PACKET * MAX_FRAME_BYTES,
         .callback         = device_event_cb,
         .callback_arg     = NULL,
     };
@@ -190,17 +211,18 @@ esp_err_t usb_mic_init(void)
 
     uac_host_dev_alt_param_t alt = {0};
     if (!find_alt_setting(&dev_info, &alt)) {
-        ESP_LOGE(TAG, "USB mic does not support %lu Hz / 16-bit",
+        ESP_LOGE(TAG, "USB mic does not support %lu Hz / 16 or 24-bit",
                  (unsigned long)g_config.sample_rate);
         uac_host_device_close(s_dev);
         s_dev = NULL;
         return ESP_ERR_NOT_SUPPORTED;
     }
     s_channels = alt.channels;
+    s_subframe = alt.subframe_size;
 
     uac_host_stream_config_t stream_config = {
         .channels       = alt.channels,
-        .bit_resolution = 16,
+        .bit_resolution = alt.bit_resolution,
         .sample_freq    = g_config.sample_rate,
         .flags          = 0,
     };
@@ -238,35 +260,34 @@ size_t usb_mic_read(int16_t *buf, size_t count)
     uac_host_device_handle_t dev = s_dev;
     if (!dev) return 0;
 
-    if (s_channels == 1) {
-        uint32_t bytes_read = 0;
-        esp_err_t ret = uac_host_device_read(dev, (uint8_t *)buf,
-                                             count * sizeof(int16_t),
-                                             &bytes_read, pdMS_TO_TICKS(200));
-        if (ret != ESP_OK) return 0;
-
-        size_t got = bytes_read / sizeof(int16_t);
-        audio_dsp_process(&s_dsp, buf, got);
-        return got;
-    }
-
-    // Stereo device: read interleaved L/R and downmix to mono.
-    static int16_t raw[RTP_SAMPLES_PER_PACKET * 2];
+    // Raw interleaved frames, converted to full-scale 32-bit mono for the DSP,
+    // which does gain/filtering at full precision and reduces to 16-bit.
+    static uint8_t raw[RTP_SAMPLES_PER_PACKET * MAX_FRAME_BYTES];
+    static int32_t mono[RTP_SAMPLES_PER_PACKET];
+    const size_t frame_bytes = (size_t)s_channels * s_subframe;
     size_t want = (count < RTP_SAMPLES_PER_PACKET) ? count : RTP_SAMPLES_PER_PACKET;
 
     uint32_t bytes_read = 0;
-    esp_err_t ret = uac_host_device_read(dev, (uint8_t *)raw,
-                                         want * 2 * sizeof(int16_t),
+    esp_err_t ret = uac_host_device_read(dev, raw, want * frame_bytes,
                                          &bytes_read, pdMS_TO_TICKS(200));
     if (ret != ESP_OK) return 0;
 
-    size_t frames = bytes_read / (2 * sizeof(int16_t));
+    size_t frames = bytes_read / frame_bytes;
     for (size_t i = 0; i < frames; i++) {
-        int32_t l = raw[i * 2];
-        int32_t r = raw[i * 2 + 1];
-        buf[i] = (int16_t)((l + r) / 2);
+        const uint8_t *f = raw + i * frame_bytes;
+        int64_t sum = 0;
+        for (uint8_t c = 0; c < s_channels; c++) {
+            // Little-endian, left-justified in the subframe: place the bytes
+            // at the top of a 32-bit word to get a full-scale sample.
+            const uint8_t *smp = f + (size_t)c * s_subframe;
+            uint32_t v = 0;
+            for (uint8_t b = 0; b < s_subframe; b++)
+                v |= (uint32_t)smp[b] << (32 - 8 * (s_subframe - b));
+            sum += (int32_t)v;
+        }
+        mono[i] = (int32_t)(sum / s_channels);
     }
 
-    audio_dsp_process(&s_dsp, buf, frames);
+    audio_dsp_process(&s_dsp, mono, buf, frames, USB_MIC_DSP_SHIFT);
     return frames;
 }

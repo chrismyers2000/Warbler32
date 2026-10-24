@@ -26,11 +26,13 @@ typedef struct {
 // and sample_rate) and reset filter state.
 void audio_dsp_init(audio_dsp_state_t *st);
 
-// Apply gain_mult, high-pass filter (cascaded shelf), and clamping in
-// place. Input samples must already be scaled to roughly int16 range
-// (e.g. after any source-specific bit-depth extraction such as the I2S
-// 32-bit frame shift).
-void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count);
+// Apply gain, the high-pass filter (cascaded shelf), then round and saturate
+// to 16-bit. `in` holds full-scale (left-justified) 32-bit samples; the gain
+// is gain_mult / 2^shift, so `shift` is the right-shift that would map a
+// 32-bit sample to the desired 16-bit scale. Everything runs in float, so no
+// bits are discarded before the gain is applied.
+void audio_dsp_process(audio_dsp_state_t *st, const int32_t *in, int16_t *out,
+                       size_t count, unsigned shift);
 
 #ifdef __cplusplus
 }

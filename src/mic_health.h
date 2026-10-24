@@ -16,8 +16,9 @@ extern "C" {
 // of continuous flatline. Also trips if samples stop arriving entirely (e.g. a
 // USB mic that dropped off the bus).
 
-// Feed one chunk of raw samples; called from audio_dsp_process().
-void mic_health_report(const int16_t *buf, size_t count);
+// Feed one chunk of raw full-scale 32-bit samples; called from
+// audio_dsp_process().
+void mic_health_report(const int32_t *buf, size_t count);
 
 // True until the mic has been flat/absent for MIC_HEALTH_TIMEOUT_MS.
 bool mic_health_ok(void);

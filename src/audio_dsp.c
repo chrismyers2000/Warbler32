@@ -36,11 +36,12 @@ void audio_dsp_init(audio_dsp_state_t *st)
     st->hpf_depth_applied = g_config.hpf_depth;
 }
 
-void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
+void audio_dsp_process(audio_dsp_state_t *st, const int32_t *in, int16_t *out,
+                       size_t count, unsigned shift)
 {
     // Dead-mic detection must see the raw signal, before gain and filtering
     // can flatten or reshape it.
-    mic_health_report(buf, count);
+    mic_health_report(in, count);
 
     // All HPF parameters are web-configurable without a reboot; re-derive
     // coefficients when any of them change (gain_mult below reads g_config
@@ -50,27 +51,28 @@ void audio_dsp_process(audio_dsp_state_t *st, int16_t *buf, size_t count)
         st->hpf_depth_applied != g_config.hpf_depth)
         audio_dsp_init(st);
 
+    const float gain = (float)g_config.gain_mult / (float)(1ULL << shift);
+
     for (size_t i = 0; i < count; i++) {
-        int32_t s = (int32_t)buf[i] * g_config.gain_mult;
+        float x = (float)in[i] * gain;
+        float y = x;
 
         // High-pass: cascaded 1st-order stages (6 dB/oct each), each
         // y[n] = α*(y[n-1] + x[n] - x[n-1]), then shelf-blend the dry
         // signal back in for a partial (attenuating) cut.
         if (st->hpf_alpha > 0.0f) {
-            float x = (float)s;
-            float y = x;
             for (int stage = 0; stage < st->stages; stage++) {
-                float out = st->hpf_alpha * (st->out[stage] + y - st->in[stage]);
+                float o = st->hpf_alpha * (st->out[stage] + y - st->in[stage]);
                 st->in[stage]  = y;
-                st->out[stage] = out;
-                y = out;
+                st->out[stage] = o;
+                y = o;
             }
-            s = (int32_t)(y + st->shelf_k * (x - y));
+            y += st->shelf_k * (x - y);
         }
 
-        if (s >  32767) s =  32767;
-        if (s < -32768) s = -32768;
+        if (y >  32767.0f) y =  32767.0f;
+        if (y < -32768.0f) y = -32768.0f;
 
-        buf[i] = (int16_t)s;
+        out[i] = (int16_t)lroundf(y);
     }
 }
