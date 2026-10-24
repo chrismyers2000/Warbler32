@@ -5,6 +5,7 @@
 
 #include "esp_log.h"
 #include "esp_wifi.h"
+#include "esp_roaming.h"
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -17,39 +18,6 @@
 #include <stdlib.h>
 
 static const char *TAG = "wifi";
-
-// Mirrors `struct roam_config` from Espressif's roaming app
-// (esp_wifi/wifi_apps/roaming_app/include/esp_roaming.h) so its RSSI
-// threshold can be changed at runtime from the web UI. That header isn't
-// reachable via a normal #include — the roaming_app component only exposes
-// it to esp_wifi's own sources (PRIV_INCLUDE_DIRS), not to application code
-// — but roam_get/set_config_params() are still real symbols linked into the
-// esp_wifi library whenever CONFIG_ESP_WIFI_ENABLE_ROAMING_APP is set (see
-// sdkconfig.defaults), so redeclaring the same layout here and calling them
-// directly works. This is a private ESP-IDF API with no stability
-// guarantee: field order/count must stay byte-for-byte identical to the
-// real struct — check esp_roaming.h again after any ESP-IDF upgrade, or any
-// change to the CONFIG_ESP_WIFI_ROAMING_* Kconfig options in
-// sdkconfig.defaults, before trusting this still lines up. In particular,
-// scan_interval/scan_rssi_threshold/scan_rssi_diff only exist in the real
-// struct when CONFIG_ESP_WIFI_ROAMING_PERIODIC_SCAN_MONITOR is on — it's
-// off in our build (see sdkconfig.defaults), so they're omitted here too.
-struct roam_config {
-    uint8_t backoff_time;
-    bool low_rssi_roam_trigger;
-    int8_t low_rssi_threshold;
-    uint8_t rssi_threshold_reduction_offset;
-    bool scan_monitor;
-    bool legacy_roam_enabled;
-    uint8_t btm_retry_cnt;
-    bool btm_roaming_enabled;
-    bool rrm_monitor;
-    uint8_t rrm_monitor_time;
-    int8_t rrm_monitor_rssi_threshold;
-    wifi_scan_config_t scan_config;
-};
-extern esp_err_t roam_get_config_params(struct roam_config *config);
-extern esp_err_t roam_set_config_params(struct roam_config *config);
 
 // Set once we're either connected to a real network or broadcasting the
 // setup AP — either way, wifi_manager_start() can stop waiting.

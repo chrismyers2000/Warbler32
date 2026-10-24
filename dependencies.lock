@@ -77,11 +77,11 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 6.0.1
+    version: 6.1.0
 direct_dependencies:
 - espressif/cjson
 - espressif/mdns
 - espressif/usb_host_uac
 manifest_hash: 375f3cbcedaad24cf0d477e7c9ad1b1993dc5d39874da1291b71e7fea0cbbe94
 target: esp32s3
-version: 2.0.0
+version: 3.0.0

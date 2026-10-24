@@ -61,11 +61,8 @@ CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
 # - The periodic scan monitor: a *second*, independent trigger that ran on
 #   its own -50dBm/30s schedule regardless of the low-RSSI setting above —
 #   disabled entirely so the low-RSSI trigger is the only thing that can
-#   ever start a roam. Note this changes the real `struct roam_config`
-#   layout (scan_interval/scan_rssi_threshold/scan_rssi_diff only exist
-#   when this is on) — wifi_manager.c's mirrored copy of that struct must
-#   be kept in sync with this setting, or roam_get/set_config_params()
-#   silently misaligns every field after it.
+#   ever start a roam. The `esp_roaming.h` header adjusts its config struct
+#   to this setting automatically at compile time.
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_ESP_WIFI_11KV_SUPPORT=y
 CONFIG_ESP_WIFI_ENABLE_ROAMING_APP=y
